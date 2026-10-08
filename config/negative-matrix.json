@@ -33,18 +33,14 @@
     "NM-FRAME-12",
     "NM-FRAME-19",
     "NM-FS-06",
-    "NM-IPC-01",
     "NM-NORELAUNCH-04",
-    "NM-ORACLE-07",
     "NM-PARITY-05",
     "NM-PARITY-06",
-    "NM-TCB-02",
     "NM-TCB-12",
     "NM-TCB-20",
     "NM-TCB-24",
     "NM-TIME-15",
-    "NM-XBIND-05",
-    "NM-XBIND-10"
+    "NM-XBIND-05"
   ],
   "cases": {
     "NM-REPLAY-01": {
@@ -1020,10 +1016,10 @@
       "blocked_on": "The store's `sup/` + `rec/` split does not exist as code. MEASURED 2026-08-31: `grep -rnE '= \"sup\"|= \"rec\"|/ \"sup\"|/ \"rec\"' over engine/ and apps/desktop/src-tauri/ (*.py, *.rs) returns no source hit — the only two occurrences of `store/sup/` and `store/rec/` in the tree are PROSE inside docstrings at governed_turn_open.py:547 and governed_output_stream.py:367. There is no directory for a principal to be denied, so this row cannot be established for or against. What must exist first: the §2.3 store layout as real paths, created and permissioned by code, and a provisioning step that installs it — `engine/ci/isolation_proof.sh` provisions real principals and proves socket peer-auth denials today, but it creates a single flat `store` directory and no sup/rec split."
     },
     "NM-IPC-01": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Authority create-pending/issue",
       "section": "§2.1",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "engine/tests/test_challenge_authority_server.py::PeerDenyTests::test_nm_ipc_01_the_sidecar_uid_is_refused_on_both_authority_messages"
     },
     "NM-IPC-02": {
       "status": "implemented",
@@ -1092,10 +1088,10 @@
       "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_oracle_06_missing_handle_is_refused"
     },
     "NM-ORACLE-07": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Handle byte tamper",
       "section": "§1.5(3), §4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "The refusal this row names is unreachable, and what happens instead is not a refusal. MEASURED 2026-10-08 by damaging a stored blob behind `ArtifactStore`'s back (`store._blobs[handle] += b'X'`) for `system_handle`, `output_handle`, `record_handle` and `lease_handle` and calling `IsolatedSigner.sign_result`: all four RAISE `SignerError('store corruption: blob digest != handle')` out of `sign_result`, from `ArtifactStore.read_verified` (engine/runtime/isolated_signer.py). No signature is minted, so it fails closed -- but `sign_result` documents that it never raises on hostile input, and the one `_Refuse(REASON_HASH_MISMATCH)` site sits behind that raise marked `# pragma: no cover - read_verified already guards`. Binding this row needs `read_verified`'s corruption arm to become a `hash_mismatch` refusal, which is a change to the signer's audited perimeter: an Architect audit and the Owner's approval come before the code. A test written today would have to assert the raise, i.e. pin the defect."
     },
     "NM-ORACLE-08": {
       "status": "implemented",
@@ -1140,10 +1136,10 @@
       "test": "apps/desktop/src-tauri/core/src/tcb_integrity.rs::nm_tcb_01_a_login_writable_pinned_artifact_refuses_start_whichever_one_it_is"
     },
     "NM-TCB-02": {
-      "status": "unreviewed",
+      "status": "implemented",
       "under_test": "Executor swap after pin",
       "section": "§9(b), §2.5, §4.7",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "test": "apps/desktop/src-tauri/launcher/src/main.rs::linux::syscall_checks::nm_tcb_02_executor_bytes_that_are_not_the_pinned_ones_are_refused"
     },
     "NM-TCB-03": {
       "status": "implemented",
@@ -1422,10 +1418,10 @@
       "test": "engine/tests/test_isolated_signer.py::RefusalTest::test_nm_xbind_09_non_completed_decision_is_refused"
     },
     "NM-XBIND-10": {
-      "status": "unreviewed",
+      "status": "blocked",
       "under_test": "Run-binding inconsistency",
       "section": "§4.5",
-      "reason": "Nobody has established this row against the tree. `unreviewed` is the honest state for a plan retrofitted onto existing code -- it freezes the debt where it was found and refuses anything NEW."
+      "blocked_on": "Two of the three things this row names do not exist to be made inconsistent. MEASURED 2026-10-08: the attested evidence carries `run_id` and `execution_attempt_id` and NO `lease_id` (`'lease_id' in _evidence(handles)` is False), and `isolated_signer.py` has zero raise sites for `REASON_RUN_BINDING_INVALID` (`re.findall(r'_Refuse\\(REASON_RUN_BINDING_INVALID', source)` -> 0; `_check_run_binding`'s own docstring says this signer raises neither it nor `nonce_mismatch`). An evidence document whose `run_id` or `execution_attempt_id` disagrees with the stored chain IS refused, under another reason: `chain_document_disagrees_with_attested_evidence:record_handle.run_id` and `...:record_handle.execution_attempt_id`, both measured. Binding the row to that refusal would record `run_binding_invalid` as implemented while nothing can produce it; producing it means adding a refusal to the signer, which is security code -- Architect audit and Owner approval first. The Rust twin `win-live/src/servers.rs` does emit the literal, for a missing `request_nonce`, which is not this row's case."
     },
     "NM-XBIND-11": {
       "status": "implemented",

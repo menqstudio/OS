@@ -125,6 +125,43 @@ class PeerDenyTests(unittest.TestCase):
         reply = handle_connection(conn, BROKER_UID, store, _config(), _sign_fn, _clock)
         self.assertFalse(reply["ok"])
 
+    def test_nm_ipc_01_the_sidecar_uid_is_refused_on_both_authority_messages(self):
+        """NM-IPC-01: the sidecar uid on the authority channel, on create-pending AND on issue.
+
+        The design names the refusal `peer_denied`; this server answers
+        `{"ok": False, "error": "peer not authorized"}` and that literal is not in the tree.
+        It is the same reply NM-IPC-02 is bound to, so this row is bound to the refusal that
+        exists rather than left open on a name: what is asserted is that the peer is refused
+        BEFORE its frame is read, on both operations, and that nothing was stored or signed.
+        """
+        case = "NM-IPC-01"
+        # create-pending as the sidecar: refused, the queued frame never dispatched.
+        store = PendingStore()
+        conn = FakeConn(SIDECAR_UID, inbound=_frame({"op": OP_CREATE_PENDING, **VALID_FIELDS}))
+        reply = handle_connection(conn, BROKER_UID, store, _config(), _sign_fn, _clock)
+        self.assertEqual(reply, {"ok": False, "error": "peer not authorized"}, case)
+        self.assertEqual(len(list(store._rows)), 0, case)  # type: ignore[attr-defined]
+        self.assertEqual(conn.decoded_reply(), reply, case)
+
+        # issue as the sidecar, against a row the BROKER legitimately created: still refused,
+        # no challenge comes back, and the row is still there for the broker to issue once.
+        created = handle_connection(
+            FakeConn(BROKER_UID, inbound=_frame({"op": OP_CREATE_PENDING, **VALID_FIELDS})),
+            BROKER_UID, store, _config(), _sign_fn, _clock)
+        self.assertTrue(created["ok"], f"{case}: the control row must exist")
+        pending_id = created["pending_challenge_id"]
+        signed = []
+        conn = FakeConn(SIDECAR_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": pending_id}))
+        reply = handle_connection(
+            conn, BROKER_UID, store, _config(), lambda data: signed.append(data) or "sig", _clock)
+        self.assertEqual(reply, {"ok": False, "error": "peer not authorized"}, case)
+        self.assertEqual(signed, [], f"{case}: nothing may be signed for a refused peer")
+        # Positive control: the broker can still issue that same row, exactly once.
+        issued = handle_connection(
+            FakeConn(BROKER_UID, inbound=_frame({"op": OP_ISSUE, "pending_challenge_id": pending_id})),
+            BROKER_UID, store, _config(), _sign_fn, _clock)
+        self.assertTrue(issued["ok"], f"{case}: the sidecar's refused attempt must not have spent the row")
+
 
 class FrameBoundTests(unittest.TestCase):
     def test_nm_frame_09_oversize_frame_refused(self):

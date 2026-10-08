@@ -1212,6 +1212,36 @@ mod linux {
             );
         }
 
+        /// NM-TCB-02 — the executor's bytes are not the ones the lease pinned ⇒ refuse, no exec.
+        ///
+        /// A swap after the start-time pin is, to this function, exactly this: a regular, root-owned,
+        /// correctly-moded file at the pinned path whose bytes hash to something else. Nothing but the
+        /// re-hash can refuse it — the open succeeds, the owner and mode pass — and until this test that
+        /// comparison was executed only by the root kit's POSITIVE turn, where it is always equal.
+        ///
+        /// What this does not establish, and the matrix row asks for: that the refusal reaches the
+        /// desktop as `tcb_integrity_violation` with no receipt. The launcher's verdict is
+        /// `Refusal::ImageIntegrity`; `tcb_integrity_violation` is a member of the closed refusal union
+        /// that nothing produces into the result frame yet. This test binds the control, not the name.
+        #[test]
+        fn nm_tcb_02_executor_bytes_that_are_not_the_pinned_ones_are_refused() {
+            let (real, digest) = system_binary();
+            let fd = open_executor_image(&real, &digest)
+                .expect("NM-TCB-02 control: the real image at its pinned digest opens");
+            unsafe { libc::close(fd) };
+
+            // The pin a lease would carry for DIFFERENT bytes: one hex digit of the true digest moved.
+            let mut swapped = digest.clone().into_bytes();
+            swapped[0] = if swapped[0] == b'0' { b'1' } else { b'0' };
+            let swapped = String::from_utf8(swapped).unwrap();
+            assert_ne!(swapped, digest);
+            assert_eq!(
+                open_executor_image(&real, &swapped),
+                Err(Refusal::ImageIntegrity),
+                "NM-TCB-02: bytes that do not hash to the lease's pin were opened for exec"
+            );
+        }
+
         /// NM-TCB-13 — the launcher is invoked by a UID that is not the recorder ⇒ refuse.
         ///
         /// The gate reads the REAL uid and gid (`getresuid` / `getresgid`) and holds both to the
