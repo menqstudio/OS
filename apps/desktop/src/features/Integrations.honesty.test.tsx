@@ -336,3 +336,11 @@ describe('enabling a connector is not promised while nothing can approve it', ()
     expect(notice).toHaveTextContent(APPROVAL_REFUSAL);
   });
 });
+
+// "A name and a provider. This is all a connector row is." sat two rows above the same pane's
+// credential-reference fact. A declaration is those two fields; the row holds more.
+describe('the declaration note does not say what the whole row is', () => {
+  it.each(['en', 'hy', 'ru'] as const)('(%s)', (lang) => {
+    expect(INTG_STR.factDeclarationNote[lang]).not.toMatch(/This is all a connector row is|ընդամենը սա է|Это всё, чем является/);
+  });
+});

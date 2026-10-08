@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Activity } from './Activity';
+import { STR as ACT_STR } from './Activity.strings';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ACTIVITY_WINDOW } from './Activity.strings';
@@ -134,5 +135,13 @@ describe('Activity — a capped read is a window, and says so', () => {
     const m = /FROM audit_events ORDER BY created_at DESC LIMIT (\d+)/.exec(rust);
     expect(m, 'activity::list no longer reads with a literal LIMIT — re-derive the window').not.toBeNull();
     expect(Number(m![1])).toBe(ACTIVITY_WINDOW);
+  });
+});
+
+// The histogram splits the span between the oldest and newest event into at most 24 equal bins.
+// A bin is a minute only by coincidence, and the label read "EVENTS FLOW · /min".
+describe('the rate histogram does not state a unit its bins do not have', () => {
+  it.each(['en', 'hy', 'ru'] as const)('no per-minute claim (%s)', (lang) => {
+    expect(ACT_STR.eventsFlow[lang]).not.toMatch(/\/\s*min|\/\s*Ր|\/\s*мин/i);
   });
 });

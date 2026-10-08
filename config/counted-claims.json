@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1075,
+      "value": 1093,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "40244f0",
+        "head": "9b138d1",
         "environments": {
+          "Debian 13 (trixie) native @ 9b138d1 + six more on-screen statements held to the code": {
+            "ran": 1093,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 40244f0 + tests driven by what the backend sends": {
             "ran": 1075,
             "skipped": 0
@@ -388,7 +392,8 @@
         1041,
         1051,
         1057,
-        1059
+        1059,
+        1075
       ]
     },
     "a11y_tests": {

@@ -43,10 +43,10 @@ export const STR = {
   },
   surfaceLedgerNote: {
     en: 'The engine’s own ledger, mirrored through the sidecar. Not the local decision table '
-      + 'shown above — that one never leaves this machine.',
-    hy: 'Engine-ի սեփական մատյանը՝ արտացոլված sidecar-ով։ Սա վերևի լոկալ աղյուսակը չի — '
+      + 'on the Decisions page — that one never leaves this machine.',
+    hy: 'Engine-ի սեփական մատյանը՝ արտացոլված sidecar-ով։ Սա «Որոշումներ» էջի լոկալ աղյուսակը չի — '
       + 'դա երբեք չի հեռանում այս մեքենայից։',
-    ru: 'Собственный журнал движка, отзеркаленный через sidecar. Это не локальная таблица выше — '
+    ru: 'Собственный журнал движка, отзеркаленный через sidecar. Это не локальная таблица на странице «Решения» — '
       + 'та никогда не покидает эту машину.',
   },
   surfaceVerdicts: {
