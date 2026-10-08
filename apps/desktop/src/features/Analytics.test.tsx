@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const invokeMock = vi.fn();
@@ -93,6 +93,34 @@ describe('Analytics — the rank scrubber', () => {
     expect(slider()).toHaveAttribute('aria-valuenow', '1');
     await user.keyboard('{End}');
     expect(slider()).toHaveAttribute('aria-valuenow', '6');
+  });
+
+  it('a pointer moves the cut: pressing on the rail sets the rank under the pointer', async () => {
+    // The rail had `cursor: pointer` and no pointer handler at all — a mouse or touch user could
+    // not move the cut, only someone who knew to Tab to it and use the arrows.
+    withNodes(5);
+    await waitFor(() => expect(slider()).toBeInTheDocument());
+    const rail = slider();
+    rail.getBoundingClientRect = () =>
+      ({ left: 100, width: 200, top: 0, height: 10, right: 300, bottom: 10, x: 100, y: 0, toJSON: () => ({}) }) as DOMRect;
+
+    // 40% along a 5-step rail is rank 2.
+    fireEvent.pointerDown(rail, { clientX: 180, button: 0, pointerId: 1 });
+    expect(slider()).toHaveAttribute('aria-valuenow', '2');
+    await waitFor(() => expect(screen.queryByText('Node 4')).toBeNull());
+
+    // Dragging while pressed follows the pointer; past either end it stops at the bound.
+    fireEvent.pointerMove(rail, { clientX: 260, buttons: 1, pointerId: 1 });
+    expect(slider()).toHaveAttribute('aria-valuenow', '4');
+    fireEvent.pointerMove(rail, { clientX: 9999, buttons: 1, pointerId: 1 });
+    expect(slider()).toHaveAttribute('aria-valuenow', '5');
+    fireEvent.pointerMove(rail, { clientX: -50, buttons: 1, pointerId: 1 });
+    expect(slider()).toHaveAttribute('aria-valuenow', '1');
+
+    // A move with no button held is a hover, not a drag.
+    fireEvent.pointerUp(rail, { pointerId: 1 });
+    fireEvent.pointerMove(rail, { clientX: 260, buttons: 0, pointerId: 1 });
+    expect(slider()).toHaveAttribute('aria-valuenow', '1');
   });
 
   it('never moves outside its own bounds', async () => {

@@ -5,9 +5,9 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `1c1f265`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `f8bf910`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `1c1f265`.** PR #356 on `cockpit/azure-soft-contrast` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `f8bf910`.** PR #357 on `cockpit/slider-pointer` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
@@ -50,7 +50,7 @@ Run these. The numbers below have been wrong in every audit round so far.
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1425 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 1027 tests / 87 files
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 1028 tests / 87 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_contrast.py           # 98 text pairs clear WCAG AA in both themes
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing

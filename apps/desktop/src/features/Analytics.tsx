@@ -133,6 +133,26 @@ function AnScrub(
     if (e.key === 'Home') { e.preventDefault(); onChange(1); }
     else if (e.key === 'End') { e.preventDefault(); onChange(max); }
   };
+  // POINTER. The rail had `cursor: pointer` and no pointer handler, so a mouse or touch user
+  // could not move the cut at all — only the keyboard contract above existed. The rank under
+  // the pointer is its fraction along the rail, rounded to a step and held to the bounds; a
+  // press sets it, and a move sets it only while a button is down (a hover is not a drag).
+  const rankAt = (rail: HTMLElement, clientX: number) => {
+    const box = rail.getBoundingClientRect();
+    if (box.width <= 0) return value;
+    return clamp(Math.round(((clientX - box.left) / box.width) * max));
+  };
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    // Keep receiving moves when the pointer leaves the rail mid-drag. Not every environment
+    // implements capture; the drag still works inside the rail without it.
+    try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* no capture here */ }
+    onChange(rankAt(e.currentTarget, e.clientX));
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.buttons & 1) === 0) return;
+    onChange(rankAt(e.currentTarget, e.clientX));
+  };
   const valueText = value >= max
     ? tr('scrubAll')
     : `${tr('scrubTop')} ${value} ${tr('scrubOf')} ${max}`;
@@ -150,12 +170,15 @@ function AnScrub(
         aria-valuetext={valueText}
         aria-describedby="an-scrub-hint"
         onKeyDown={onKeyDown}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
       >
         <span className="an-scrub-fill" style={{ width: `${(value / max) * 100}%` }} aria-hidden="true" />
         <span className="an-scrub-knob" style={{ left: `${(value / max) * 100}%` }} aria-hidden="true" />
       </div>
       {/* The value is TEXT as well as an aria attribute: a sighted mouse user gets no
-          screen reader, and a rail with a knob and no number is a guess. */}
+          screen reader, and a rail with a knob and no number is a guess. (That user can move the
+          cut now, too — see the pointer handlers.) */}
       <b className="mono an-scrub-value">{valueText}</b>
       <span className="micro muted an-scrub-hint" id="an-scrub-hint">{tr('scrubHint')}</span>
     </div>
@@ -425,6 +448,8 @@ const ANALYTICS_CSS = `
 /* The focus ring is NOT decoration here: the rail is the only focusable thing in this
    row, and a keyboard user who cannot see where focus landed cannot use the arrows. */
 .v-analytics .an-scrub-rail:focus-visible { outline: 2px solid var(--azure); outline-offset: 4px; }
+/* a horizontal drag on the rail is the slider's, not a page pan */
+.v-analytics .an-scrub-rail { touch-action: none; }
 .v-analytics .an-scrub-fill { position: absolute; inset: 0 auto 0 0; border-radius: var(--r-pill);
   background: linear-gradient(90deg, rgb(var(--cyan-rgb)/.55), rgb(var(--azure-rgb)/.9)); }
 .v-analytics .an-scrub-knob { position: absolute; top: 50%; width: 14px; height: 14px;
