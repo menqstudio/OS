@@ -23,7 +23,7 @@
 import { useState } from 'react';
 import { useApp } from '../app/store';
 import { Button, ErrorState, Select, Skeleton } from '../components/ui';
-import { useAsync } from '../hooks/useAsync';
+import { established, useAsync } from '../hooks/useAsync';
 import { desktop, governedTurnAttempt } from '../services/desktop';
 import { isUnauthenticatedMirror, recordCount, type GovernanceRead } from '../services/governance';
 import { isVerified, type GovernedTurnAttempt, type NonDecision } from '../services/governedTurn';
@@ -161,11 +161,16 @@ function TurnOutcome({ attempt, L }: { attempt: GovernedTurnAttempt; L: Localize
       </div>
     );
   }
-  // What is left never reached a broker reply at all: nobody allowed or refused this turn.
+  // What is left produced no broker reply. For most of it the broker was never reached, and
+  // nobody allowed or refused this turn. Two kinds cannot say that: `broker_transport_failed` is a
+  // failure AFTER the connection, and an unclassified failure is one this app cannot place — the
+  // request may have been written, so the words stop at "no answer came back".
+  const maybeSent = attempt.kind === 'broker_transport_failed'
+    || attempt.kind === 'unclassified_transport_failure';
   return (
     <div role="note">
-      <span className="pill">{L('outcomeUnavailable')}</span>
-      <p className="br-body">{L('outcomeUnavailableBody')}</p>
+      <span className="pill">{L(maybeSent ? 'outcomeNoVerdictReceived' : 'outcomeUnavailable')}</span>
+      <p className="br-body">{L(maybeSent ? 'outcomeNoVerdictReceivedBody' : 'outcomeUnavailableBody')}</p>
       <p className="micro br-why">{L('kindLabel')}<b className="mono">{attempt.kind}</b></p>
       <p className="micro br-why">{L(NON_DECISION_COPY[attempt.kind])}</p>
       <p className="micro br-why">{attempt.detail}</p>
@@ -236,7 +241,9 @@ export function BridgePanel({ taskId }: { taskId?: string } = {}) {
           <MirrorRow
             name={L('surfaceVerdicts')}
             note={taskId ? L('surfaceVerdictsNote') : L('surfaceVerdictsNoSelection')}
-            read={verdicts.data}
+            // `established`, not `.data`: while the read for a newly selected decision is in flight
+            // `.data` is still the PREVIOUS decision's answer, and its record count stood under this one.
+            read={established(verdicts)}
             L={L}
           />
         </div>
