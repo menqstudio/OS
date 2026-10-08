@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-governed-trust-selftest"
+description = "Enables the governed_trust_selftest command without any pre-configured scope."
+commands.allow = ["governed_trust_selftest"]
+
+[[permission]]
+identifier = "deny-governed-trust-selftest"
+description = "Denies the governed_trust_selftest command without any pre-configured scope."
+commands.deny = ["governed_trust_selftest"]

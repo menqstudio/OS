@@ -1252,7 +1252,13 @@ the grant for the reason `set_enabled` already gives. It is T-052 code, so it go
 through the next audit rather than into a copy fix. The alternative — removing the two buttons —
 is cheaper and leaves the feature dead; not recommended.
 
-## 2h. Six commands the cockpit calls are refused to its own window (recorded 2026-10-08)
+## 2h. DECISION TAKEN 2026-10-09 — five of the six window-refused commands are granted
+
+**What you decided:** grant the four governance reads and the trust self-test; keep
+`governed_turn_execute` outside the manifest until an independent audit has it in scope. Done in
+the pull request "grant reads": `build.rs` `COMMANDS`, `command-policy.json` (tier `R`),
+`capabilities/default.json`, and `tools/check_capabilities.py`, whose exception list is one name
+now. The record of how it was found stays below.
 
 `tools/check_capabilities.py` has said this in a comment since it was corrected; no document you
 read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in neither `build.rs`

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-decision-ledger"
+description = "Enables the read_decision_ledger command without any pre-configured scope."
+commands.allow = ["read_decision_ledger"]
+
+[[permission]]
+identifier = "deny-read-decision-ledger"
+description = "Denies the read_decision_ledger command without any pre-configured scope."
+commands.deny = ["read_decision_ledger"]
