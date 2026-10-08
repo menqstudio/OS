@@ -75,7 +75,9 @@ export function TrustSelftestPanel() {
         )}
         {state === 'done' && result && !result.available && (
           <p className="pill off" role="status">
-            {tr('Unavailable on this platform (Windows build only).', 'Անհասանելի այս հարթակում (միայն Windows-ի բիլդ)։', 'Недоступно на этой платформе (только сборка Windows).')}
+            {/* The backend runs the self-test on every platform since 2026-10-09. If it ever answers
+                `available: false` again, the page does not guess which platform would have run it. */}
+            {tr('The self-test is not available in this build.', 'Ինքնաստուգումը հասանելի չէ այս տարբերակում։', 'Самопроверка недоступна в этой сборке.')}
           </p>
         )}
         {state === 'done' && result && result.available && !passed && (

@@ -28,7 +28,7 @@ use serde::Serialize;
 /// The result of one governed trust-chain self-test.
 #[derive(Serialize)]
 pub struct TrustSelftest {
-    /// True only where the in-process kit is compiled (Windows).
+    /// True where the in-process kit ran. It is compiled on every platform since 2026-10-09.
     pub available: bool,
     /// The committed message's trust state: `"trusted_verified"` on a bound run, else empty.
     pub trust_state: String,
@@ -93,8 +93,7 @@ independent audit — which has not happened — and real turns also need a live
 /// That fallback is legitimate — the self-test exists to prove the CHAIN works, with or without a model —
 /// but it must never be invisible. `AnswerSource` travels with the answer so a UI cannot show a placeholder
 /// beside `trusted_verified` without saying which one it is (remediation audit, honesty finding).
-#[cfg(windows)]
-const SELFTEST_DEMO_OUTPUT: &[u8] = b"BROPS windows governed output v1";
+const SELFTEST_DEMO_OUTPUT: &[u8] = b"BROPS governed self-test output v1";
 
 /// Where the self-test's answer came from (remediation audit, honesty finding).
 ///
@@ -114,6 +113,16 @@ pub enum AnswerSource {
     BuiltinPlaceholderNoModelConfigured,
     /// A model was configured but did not run, or produced nothing usable.
     BuiltinPlaceholderModelFailed,
+}
+
+/// The model seam exists on WINDOWS ONLY, and that is deliberate. Off Windows this never spawns
+/// anything: the self-test proves the chain over the built-in placeholder and says so. Running
+/// `$BROPS_SELFTEST_MODEL_CMD` through a shell would be a new, ungoverned way to execute a
+/// command from the desktop host on a platform that has none today, and the self-test does not
+/// need it to do its job.
+#[cfg(not(windows))]
+fn run_selftest_model(_cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
+    (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderNoModelConfigured)
 }
 
 #[cfg(windows)]
@@ -151,11 +160,14 @@ fn run_selftest_model(cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
     }
 }
 
-/// Run the governed trust-chain self-test. On Windows this executes the real
-/// in-process turn; elsewhere it reports honestly that the kit isn't compiled.
+/// Run the governed trust-chain self-test: the real in-process turn, on every platform.
+///
+/// Until 2026-10-09 this ran on Windows only and answered "compiled only for the Windows build"
+/// elsewhere. Nothing in the chain is Windows code — `brops-win-live`'s own test of it passes on
+/// Linux — and the only thing that kept it out of the Linux host was a `cfg(windows)` dependency
+/// line. The first real install on Debian showed the button there, able to say only that.
 #[tauri::command]
 pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
-    #[cfg(windows)]
     {
         let now_ms: i64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -198,24 +210,7 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
             answer_source: source.get(),
             answer_is_from_a_model: source.get() == AnswerSource::Model,
             custody_note: CUSTODY_NOTE.to_string(),
-            platform_note: "windows".to_string(),
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(TrustSelftest {
-            available: false,
-            trust_state: String::new(),
-            production_verified: false,
-            demonstration_custody: true, // this build never proves production trust
-            bound: false,
-            chain_bound: false,
-            detail: "The in-process governed trust self-test is compiled only for the Windows build.".to_string(),
-            answer: String::new(),
-            answer_source: AnswerSource::BuiltinPlaceholderNoModelConfigured,
-            answer_is_from_a_model: false,
-            custody_note: CUSTODY_NOTE.to_string(),
-            platform_note: "non-windows".to_string(),
+            platform_note: std::env::consts::OS.to_string(),
         })
     }
 }
@@ -258,6 +253,41 @@ mod custody_wording {
         let result = governed_trust_selftest().expect("the self-test command must answer");
         assert_eq!(result.custody_note, CUSTODY_NOTE);
         assert!(result.demonstration_custody, "this command never proves production trust");
+    }
+}
+
+#[cfg(test)]
+mod runs_everywhere {
+    use super::*;
+
+    /// The self-test RUNS on the platform this is compiled for, and reaches a bound turn.
+    ///
+    /// On the first real Debian install the button answered "unavailable on this platform (Windows
+    /// build only)". The chain it runs has no Windows code in it. This is the test that would have
+    /// said so: it runs on every runner, Linux included, and holds the result to a real pass.
+    #[test]
+    fn the_self_test_is_available_and_binds_a_turn_on_this_platform() {
+        let r = governed_trust_selftest().expect("the self-test command must answer");
+        assert!(r.available, "the self-test must be available on {}", std::env::consts::OS);
+        assert!(r.bound, "the turn did not bind: {}", r.detail);
+        assert!(r.chain_bound, "the chain did not bind: {}", r.detail);
+        assert_eq!(r.trust_state, "trusted_verified");
+        // And it is still not production trust, on any platform.
+        assert!(r.demonstration_custody);
+        assert_eq!(r.platform_note, std::env::consts::OS);
+        assert!(!r.answer.is_empty());
+    }
+
+    /// Off Windows the model seam spawns NOTHING, whatever the variable says.
+    #[cfg(not(windows))]
+    #[test]
+    fn off_windows_a_configured_command_is_not_run() {
+        let marker = std::env::temp_dir().join(format!("brops-selftest-must-not-exist-{}", brops_core::id()));
+        let cmd = format!("touch {}", marker.display());
+        let (out, src) = run_selftest_model(Some(&cmd));
+        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
+        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
+        assert!(!marker.exists(), "the configured command was executed");
     }
 }
 

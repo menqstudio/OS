@@ -1273,12 +1273,14 @@ Two things this showed that are not decisions yet. The self-test button is offer
 can only say it is Windows-only. And a reinstall over an existing anchor was run for the first
 time: the installer verified what was there, changed nothing and reported success.
 
-**Recommendation: hide the self-test control off Windows rather than build a Linux self-test
-now.** The Linux chain is proven by the live kits in CI, which run the real services; an
-in-process imitation of it in the desktop would be a second, weaker proof to maintain. Hiding the
-control costs a platform check and one string, and removes a button that cannot do anything. The
-alternative, a Linux self-test, is a far larger piece of work (not sized here) and belongs
-after the deployment exists.
+**DECIDED 2026-10-09: the self-test runs on Linux too — and the recommendation that stood here was
+wrong on the facts.** It said to hide the control off Windows because a Linux self-test was "a far
+larger piece of work (not sized here)". Nobody had looked. You asked why not build it, and looking
+took minutes: the chain the self-test runs has no Windows code in it, `brops-win-live`'s own test
+of it already passed on this Linux machine, and the only thing keeping it out of the Linux host
+was one `cfg(windows)` dependency line. That line is unconditional now. The model seam
+(`BROPS_SELFTEST_MODEL_CMD`) stays Windows-only on purpose: off Windows the self-test spawns
+nothing and says its answer is the built-in placeholder.
 
 `tools/check_capabilities.py` has said this in a comment since it was corrected; no document you
 read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in neither `build.rs`
