@@ -294,3 +294,45 @@ describe('Group room · what the delegation is and is not connected to', () => {
     expect(rows[1].textContent).toContain(`${STR.delegationAskPrefix.en} Analyst`);
   });
 });
+
+// The deck's ask errors and form error are state of the DECK, and a different room is a different
+// record: the effect that clears the previous room's delegations left these two standing, so
+// "could not ask Scout: provider down" stayed on screen under a room nobody had asked anything.
+describe('Group room · a failed ask belongs to the room it was sent in', () => {
+  it('switching rooms takes the previous room\'s ask errors off the screen', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    const SECOND = { ...ROOM, id: 'g-2', title: 'Second room' };
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM, SECOND]);
+      if (cmd === 'list_messages') return Promise.resolve([]);
+      if (cmd === 'list_agents') return Promise.resolve([agent('scout', 'Scout'), agent('analyst', 'Analyst')]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Scout', 'Analyst']);
+      if (cmd === 'ai_status') {
+        return Promise.resolve({ provider: 'claude-cli', model: 'm', ready: true, detail: 'ok', governed: false });
+      }
+      if (cmd === 'search_all') return Promise.resolve([]);
+      if (cmd === 'post_user_message') {
+        return Promise.resolve({
+          id: 'open-1', conversationId: String(args?.conversationId ?? 'g-1'), role: 'user', author: 'You',
+          body: String(args?.body ?? ''), createdAt: '1700000000000', receipt: null,
+        });
+      }
+      if (cmd === 'stream_reply') return Promise.reject(new Error('provider down'));
+      if (cmd === 'list_delegations') return Promise.reject(new Error('Command list_delegations not found'));
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+
+    await askTheRoom();
+    const failed = new RegExp(STR.askFailed.en);
+    await waitFor(() => expect(screen.getAllByText(failed).length).toBeGreaterThan(0));
+    expect(screen.getAllByText(/provider down/).length).toBeGreaterThan(0);
+
+    const selector = (await screen.findAllByRole('combobox', { name: 'Room' }))[0] as HTMLSelectElement;
+    fireEvent.change(selector, { target: { value: 'g-2' } });
+    await waitFor(() => expect(selector.value).toBe('g-2'));
+
+    await waitFor(() => expect(screen.queryAllByText(failed)).toHaveLength(0));
+    expect(screen.queryAllByText(/provider down/)).toHaveLength(0);
+  });
+});
