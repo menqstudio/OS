@@ -319,7 +319,11 @@ export function effectiveBackground(el: Element): string {
 export function contrastRatio(fg: string, bg: string): number {
   const lum = (value: string): number => {
     const parsed = parseRgb(value);
-    if (!parsed) return 0;
+    // NaN, not 0. A colour this cannot read used to count as BLACK, so unreadable text on white
+    // scored 21:1 and passed every `>= 4.5` it was put to — and `parseRgb` reads only `rgb()` /
+    // `rgba()`, while Chromium serialises every `color-mix()` as `color(srgb …)`. NaN poisons the
+    // ratio, and `NaN >= 4.5` is false: an unmeasured pair fails instead of passing.
+    if (!parsed) return Number.NaN;
     const [r, g, b] = parsed.map((c, i) => {
       if (i === 3) return c;
       const s = c / 255;
