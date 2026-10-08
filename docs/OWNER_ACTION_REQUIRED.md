@@ -1260,6 +1260,26 @@ the pull request "grant reads": `build.rs` `COMMANDS`, `command-policy.json` (ti
 `capabilities/default.json`, and `tools/check_capabilities.py`, whose exception list is one name
 now. The record of how it was found stays below.
 
+**Seen working, 2026-10-09**, in the application reinstalled from a package built with the grant.
+The Bridge page's two mirror rows no longer print `not allowed by ACL`; they print what the backend
+answers: `the governance mirror is not provisioned: BROPS_GOVERNANCE_STATE_DIR is unset`. The
+Security page shows the same reason for the evidence chain, and the self-test button answers
+`unavailable on this platform (Windows build only)`. So the wall that was removed was the first of
+several, and the next one is honest and already documented (`docs/OPERATOR_GUIDE.md`): nothing in
+the installed product sets the state directory, because nothing installs an engine state to read.
+That is Phase 1's deployment wiring, now observed rather than read.
+
+Two things this showed that are not decisions yet. The self-test button is offered on Linux and
+can only say it is Windows-only. And a reinstall over an existing anchor was run for the first
+time: the installer verified what was there, changed nothing and reported success.
+
+**Recommendation: hide the self-test control off Windows rather than build a Linux self-test
+now.** The Linux chain is proven by the live kits in CI, which run the real services; an
+in-process imitation of it in the desktop would be a second, weaker proof to maintain. Hiding the
+control costs a platform check and one string, and removes a button that cannot do anything. The
+alternative, a Linux self-test, is a far larger piece of work (not sized here) and belongs
+after the deployment exists.
+
 `tools/check_capabilities.py` has said this in a comment since it was corrected; no document you
 read said it. Six commands are registered in `src-tauri/src/lib.rs` and are in neither `build.rs`
 `COMMANDS` nor `capabilities/default.json`: `governed_turn_execute`, `read_decision_ledger`,
