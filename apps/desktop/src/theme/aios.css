@@ -67,7 +67,13 @@
 
 /* ─── TOKENS · LIGHT (first-class, not a naive invert) ─────────────────────── */
 :root[data-theme="light"]{
-  --azure:#0A6FE0; --azure-hover:#0A84FF; --azure-soft:#4DA5FF;
+  /* `--azure-soft` re-tuned 2026-10-08 from #4DA5FF at constant hue and saturation. It is painted
+     as TEXT (`.tag`, the approval tier chips on a 10% azure tint, `.ar-trig`) and computed 2.58:1
+     on the surface, 2.40 on `--bg` and 2.10 on its own tint; the retune below listed six colours
+     and missed this one, and it was in no contrast pair. It is 4.64 on the worst of the three now,
+     and DARKER than `--azure` — on a light ground the readable colour is the dark one, and the
+     name was chosen for the dark theme, where it is the lighter. */
+  --azure:#0A6FE0; --azure-hover:#0A84FF; --azure-soft:#0064CB;
   /* Re-tuned 2026-08-29 at constant hue and saturation, because the real-browser axe sweep
      measured every one of these BELOW WCAG AA as text on the surfaces they are actually painted
      on. `--cyan-soft` carries `.eyebrow` on nearly every page header and measured **1.99:1** on
@@ -82,7 +88,7 @@
   --ink:#0C1220; --ink-muted:#5A6478;
   --success:#0F794C; --warning:#865D00; --danger:#BA2B37;
 
-  --azure-rgb:10 111 224; --azure-soft-rgb:77 165 255;
+  --azure-rgb:10 111 224; --azure-soft-rgb:0 100 203;
   /* The triplets move WITH the hexes above. A colour and its own rgb triplet disagreeing is a
      drift the token-parity gate cannot see, because these are aios.css's palette and not the
      `--menq-*` one it compares. */
