@@ -263,7 +263,7 @@ export const STR = {
   // ── Header ─────────────────────────────────────────────────────────────────
   headerEyebrow: {
     en: 'INTEGRATIONS · SYSTEM MAP',
-    hy: 'ԻՆՏԵԳՐՈՒՄՆԵՐ · SYSTEM CONSTELLATION',
+    hy: 'ԻՆՏԵԳՐՈՒՄՆԵՐ · ՀԱՄԱԿԱՐԳԻ ՔԱՐՏԵԶ',
     ru: 'ИНТЕГРАЦИИ · КАРТА СИСТЕМЫ',
   },
   headerVerified: {
@@ -347,7 +347,7 @@ export const STR = {
   connectionRegistry: { en: 'Connection registry', hy: 'Միացման ռեեստր', ru: 'Реестр подключений' },
   selectRowHint: {
     en: 'Select a row to inspect its channel.',
-    hy: 'ընտրիր տողը՝ մանրամասները բացելու համար',
+    hy: 'Ընտրեք տողը՝ դրա ալիքը դիտելու համար։',
     ru: 'Выберите строку, чтобы просмотреть её канал.',
   },
   searchPlaceholder: {

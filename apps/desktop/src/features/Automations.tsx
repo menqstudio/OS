@@ -959,7 +959,8 @@ export function Automations() {
                 {' · '}<b className="mono">{ledgerSummary.unattributed}</b> {L('ledgerUnattributed')}
               </p>
             </>
-          ) : runs.error ? null : (
+          ) : runs.error || runs.loading ? null : (
+            // Only once the read has answered: an empty list nobody has read yet is not "no runs".
             <p className="au-note muted">{L('noRuns')}</p>
           )}
           {/* A failed history read is said, never shown as "No runs yet". */}

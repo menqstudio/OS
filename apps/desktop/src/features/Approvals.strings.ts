@@ -159,8 +159,8 @@ export const STR = {
   selectRowHint:    { en: 'Select a row to seat it at the gate · ', hy: 'Ընտրիր տողը՝ դարպասին բերելու համար · ', ru: 'Выберите строку, чтобы поместить её в шлюз · ' },
   inQueueSuffix:    { en: ' in queue', hy: ' գործողություն հերթում', ru: ' в очереди' },
   approvalQueueAria:{ en: 'Approval queue', hy: 'Հաստատումների հերթ', ru: 'Очередь одобрений' },
-  target:           { en: 'Target', hy: 'Ազդեցություն', ru: 'Цель' },
-  waitingLabel:     { en: 'Waiting', hy: 'Ժամկետ', ru: 'Ожидание' },
+  target:           { en: 'Target', hy: 'Թիրախ', ru: 'Цель' },
+  waitingLabel:     { en: 'Waiting', hy: 'Սպասում', ru: 'Ожидание' },
 
   // ── stats strip aria ───────────────────────────────────────────────────────
   approvalStats: { en: 'Approval statistics', hy: 'Հաստատումների վիճակագրություն', ru: 'Статистика одобрений' },

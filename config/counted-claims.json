@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1118,
+      "value": 1135,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "e9ef07e",
+        "head": "a1c0c28",
         "environments": {
+          "Debian 13 (trixie) native @ a1c0c28 + a high-risk row in the success tone, and six more": {
+            "ran": 1135,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ e9ef07e + a mention after a non-ASCII name, and a room's stale errors": {
             "ran": 1118,
             "skipped": 0
@@ -403,7 +407,8 @@
         1059,
         1075,
         1093,
-        1106
+        1106,
+        1118
       ]
     },
     "a11y_tests": {

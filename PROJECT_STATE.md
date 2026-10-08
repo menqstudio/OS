@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-08 — 147 pull requests merged (`#219`–`#366`), `main` at
-`1b5c860`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-09 — 152 pull requests merged (`#219`–`#371`), `main` at
+`a1c0c28`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -45,7 +45,7 @@ Each row carries the date it was measured, because they are not measured togethe
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
 | `tools/` self-tests · 2026-10-08 | 1769 OK; contrast gate 98 pairs |
-| frontend · 2026-10-08 | typecheck clean, 1118 / 87 files |
+| frontend · 2026-10-08 | typecheck clean, 1135 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
 | Rust, 10 crates · 2026-10-08 | 1430 passed, 1 ignored (needs root; CI runs it) |

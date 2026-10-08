@@ -189,3 +189,21 @@ describe('Calendar — run history, and the receipt this build cannot produce', 
     expect(invokeMock.mock.calls.some((c) => c[0] === 'delete_event')).toBe(false);
   });
 });
+
+// Run times were `new Date(Number(run.ranAt)).toLocaleString()`: the shared parser was bypassed, so
+// a time it reads and `Number()` does not printed "Invalid Date", and the machine's locale was
+// used instead of the page's.
+describe('Calendar — run times go through the shared parser', () => {
+  it('a time the shared parser reads is not printed as "Invalid Date"', async () => {
+    mount({ runs: [{ id: 'run-9', automationId: 'au-1', ranAt: '2026-08-07T14:44:11.166Z', outcome: 'ok', detail: '' }] });
+    await historyWithRuns(1);
+    expect(document.querySelector('.cal-run-when')!.textContent).not.toMatch(/Invalid Date/);
+    expect(document.querySelector('.cal-run-when')!.textContent).toMatch(/2026/);
+  });
+
+  it('a time nothing can read is a dash, not "Invalid Date"', async () => {
+    mount({ runs: [{ id: 'run-9', automationId: 'au-1', ranAt: 'not a time', outcome: 'ok', detail: '' }] });
+    await historyWithRuns(1);
+    expect(document.querySelector('.cal-run-when')!.textContent).toBe('—');
+  });
+});

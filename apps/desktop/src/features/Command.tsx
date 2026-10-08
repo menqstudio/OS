@@ -88,6 +88,10 @@ function stepMeta(status: string): { node: string; rs: string } {
   switch ((status || '').toLowerCase()) {
     case 'done': return { node: 'done', rs: 'done' };
     case 'active': return { node: 'now', rs: 'now' };
+    // Their own classes. Both fell to `wait`, so a failed step wore the amber "waiting" pill
+    // beside a status word that said it had failed.
+    case 'failed': return { node: '', rs: 'fail' };
+    case 'skipped': return { node: '', rs: 'skip' };
     default: return { node: '', rs: 'wait' };
   }
 }

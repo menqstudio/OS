@@ -344,3 +344,17 @@ describe('the declaration note does not say what the whole row is', () => {
     expect(INTG_STR.factDeclarationNote[lang]).not.toMatch(/This is all a connector row is|ընդամենը սա է|Это всё, чем является/);
   });
 });
+
+// Armenian only: the header eyebrow was half English and named a different thing
+// («SYSTEM CONSTELLATION» against "system map"), and the row hint was a lower-case fragment about
+// "details" where the other two languages are a sentence about the connector's channel.
+describe('the Armenian strings say what the other two say', () => {
+  it('the header eyebrow is translated', () => {
+    expect(INTG_STR.headerEyebrow.hy).not.toMatch(/[A-Za-z]/);
+  });
+  it('the row hint is a sentence about the channel', () => {
+    expect(INTG_STR.selectRowHint.hy).toMatch(/^[Ա-Ֆ]/);
+    expect(INTG_STR.selectRowHint.hy).toMatch(/ալիք/);
+    expect(INTG_STR.selectRowHint.hy).toMatch(/։$/);
+  });
+});
