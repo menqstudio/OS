@@ -52,7 +52,7 @@ import { CommandPalette } from '../components/CommandPalette';
 import { ToastProvider } from '../components/toast';
 import { PAGES, arrange as arrangeInvoke, type State } from './pages.fixtures';
 import { settleAnimations } from '../test/computedStyle';
-import { measuredContrast } from '../test/contrast';
+import { belowNeed, measuredContrast } from '../test/contrast';
 
 /**
  * The rule set. WCAG 2.0/2.1 A and AA, which is the standard this cockpit's design gates already
@@ -169,7 +169,7 @@ function split(results: axe.AxeResults) {
 }
 
 const describeUnreadable = (u: Unreadable) =>
-  `  ${u.target}\n      measured ${u.ratio.toFixed(2)}:1, needs ${u.need}:1 `
+  `  ${u.target}\n      measured ${u.ratio.toFixed(4)}:1, needs ${u.need}:1 `
   + `(text ${u.fg} on ${u.bg})`;
 
 /** One line per violation, with the element and the measured ratio when axe reports one. */
@@ -197,7 +197,7 @@ describe('accessibility in a real browser, with the stylesheet attached', () => 
           expect(real, `\n${name} (${state}, ${theme}) — WCAG A/AA violations in a real `
             + `browser with real CSS:\n${report(real)}\n`).toEqual([]);
           // The nodes axe could not read are measured here instead of being dropped. See `split`.
-          const failed = unreadable.filter((u) => u.ratio + 0.005 < u.need);
+          const failed = unreadable.filter((u) => belowNeed(u.ratio, u.need));
           expect(failed, `\n${name} (${state}, ${theme}) — contrast axe could not compute, measured `
             + `directly from the CSSOM:\n${failed.map(describeUnreadable).join('\n')}\n`).toEqual([]);
         });
@@ -254,7 +254,7 @@ describe('accessibility in a real browser, with the stylesheet attached', () => 
     const { container } = await mount(<Shell><h1>Stage</h1></Shell>);
     const { real, unreadable } = split(await axe.run(container, AXE_OPTIONS));
     expect(real, `\nshell — ${report(real)}\n`).toEqual([]);
-    expect(unreadable.filter((u) => u.ratio + 0.005 < u.need)
+    expect(unreadable.filter((u) => belowNeed(u.ratio, u.need))
       .map(describeUnreadable)).toEqual([]);
   });
 
@@ -268,7 +268,7 @@ describe('accessibility in a real browser, with the stylesheet attached', () => 
     await settleAnimations();
     const { real, unreadable } = split(await axe.run(container, AXE_OPTIONS));
     expect(real, `\ncommand dock — ${report(real)}\n`).toEqual([]);
-    const failed = unreadable.filter((u) => u.ratio + 0.005 < u.need);
+    const failed = unreadable.filter((u) => belowNeed(u.ratio, u.need));
     expect(failed, `\ncommand dock — contrast axe could not compute, measured directly:\n`
       + `${failed.map(describeUnreadable).join('\n')}\n`).toEqual([]);
   });
@@ -308,7 +308,7 @@ describe('accessibility in a real browser, with the stylesheet attached', () => 
     const results = await axe.run(container, AXE_OPTIONS);
     const { real, unreadable } = split(results);
     const caught = real.some((v) => v.id === 'color-contrast')
-      || unreadable.some((u) => u.ratio < u.need);
+      || unreadable.some((u) => belowNeed(u.ratio, u.need));
     expect(caught, 'the planted low-contrast paragraph must be reported by one route or the other')
       .toBe(true);
   });

@@ -21,6 +21,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { AppProvider } from '../app/store';
 import { Decisions } from './Decisions';
+import { STR as DEC_STR } from './Decisions.strings';
 
 const DECISION = {
   id: 'd-1',
@@ -192,5 +193,17 @@ describe("Decisions — the ENGINE's reason for an empty chain reaches the owner
     // "I could not look" must never be dressed as "I looked and found nothing".
     expect(screen.queryByText('The engine’s own account:')).not.toBeInTheDocument();
     expect(screen.queryByText(/holds no tasks/)).not.toBeInTheDocument();
+  });
+});
+
+// The page CALLS the evidence read. When that comes back `blocked` or `unreachable` the body said
+// the chain "is not exposed to the desktop yet" — a statement about what exists, made by the page
+// that had just used it. What the page knows is that this read returned no chain.
+describe('a failed evidence read is described as a failed read', () => {
+  it.each(['en', 'hy', 'ru'] as const)('does not say the read path is absent (%s)', (lang) => {
+    for (const key of ['sealedBody', 'chainSealedAnnounce'] as const) {
+      expect(DEC_STR[key][lang]).not.toMatch(/not exposed to the desktop|հասանելի չէ desktop-ին|не открыта для десктопа|недоступна для десктопа/);
+      expect(DEC_STR[key][lang]).toMatch(/could not be read|չհաջողվեց կարդալ|не удалось прочитать/);
+    }
   });
 });

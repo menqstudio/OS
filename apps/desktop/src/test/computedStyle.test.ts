@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('vitest/browser', () => ({ cdp: () => ({}) }));
 
 import { contrastRatio } from './computedStyle';
+import { belowNeed } from './contrast';
 
 // `contrastRatio` is the number a real-Chromium spec gates `>= 4.5` on. It is pure arithmetic over
 // the strings the browser computed, so the arithmetic can be held here, outside a browser.
@@ -34,5 +35,27 @@ describe('contrastRatio — a colour it cannot read is not a passing colour', ()
     const ratio = contrastRatio('rgb(255, 255, 255)', 'color(srgb 0.1 0.1 0.1)');
     expect(ratio >= 4.5).toBe(false);
     expect(Number.isNaN(ratio)).toBe(true);
+  });
+});
+
+// The real-Chromium accessibility spec measures the nodes axe cannot read and filtered them with
+// `u.ratio + 0.005 < u.need`: a ratio of 4.4995 passed a 4.5 requirement. That is the rounding
+// toward passing the ninth audit removed from `tools/check_contrast.py`, which compares the RAW
+// ratio and names 4.4996 and 4.4995 as the cases. And a ratio that is not a number compared
+// false both ways, so a measurement that was never taken passed too.
+describe('belowNeed — the verdict is on the raw ratio, and no number is not a pass', () => {
+  it('fails a ratio a hair under the requirement', () => {
+    expect(belowNeed(4.4995, 4.5)).toBe(true);
+    expect(belowNeed(4.4999, 4.5)).toBe(true);
+    expect(belowNeed(2.9996, 3)).toBe(true);
+  });
+
+  it('passes a ratio that meets it exactly or exceeds it', () => {
+    expect(belowNeed(4.5, 4.5)).toBe(false);
+    expect(belowNeed(7.1, 4.5)).toBe(false);
+  });
+
+  it('fails a ratio that was never measured', () => {
+    expect(belowNeed(Number.NaN, 4.5)).toBe(true);
   });
 });

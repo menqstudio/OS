@@ -131,3 +131,15 @@ function ancestorOpacity(el: Element): number {
   }
   return total;
 }
+
+/**
+ * Does a measured ratio fall short of what the text needs?
+ *
+ * On the RAW ratio. The spec that uses this wrote `ratio + 0.005 < need` in three places, which
+ * passed 4.4995 against 4.5 — the rounding toward passing that `tools/check_contrast.py` had
+ * already given up. And written as `!(ratio >= need)` on purpose: a ratio that is not a number is
+ * a measurement that was never taken, and `NaN < need` would have called it a pass.
+ */
+export function belowNeed(ratio: number, need: number): boolean {
+  return !(ratio >= need);
+}
