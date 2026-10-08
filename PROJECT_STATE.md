@@ -11,7 +11,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `bc01a43`.** PR #362 on `cockpit/evidence-copy` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `aa2aad0`.** PR #363 on `docs/window-refused-commands` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
@@ -34,7 +34,7 @@ where this and [`MASTER_EXECUTION_ROADMAP.md`](MASTER_EXECUTION_ROADMAP.md) disa
 | 6 Multi-Agent | Done — 10/10 |
 | 7 Group Chat | Done — 8/8 |
 | 8 Automation | In-Progress — 7/9; `run_automation` is a local write, not a governed dispatch, so its receipt evidence is permanently unobserved |
-| 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked; no connector can be enabled or disabled (OWNER 2g) |
+| 9 Integrations | In-Progress — 7/9; inbound/outbound has no backing command and renders as blocked; no connector can be toggled (OWNER 2g) |
 | 10 Production | Blocked — release refuses to ship unsigned; O-1 to O-5 all OPEN, none needing an Owner artifact |
 
 ## Suites
