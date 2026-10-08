@@ -372,6 +372,30 @@ describe('Approvals — the local ledger is not the engine, and the engine secti
     } finally { cleanup(); }
   });
 
+  it('a FAILED read does not report "0 pending" in green — nothing was counted', async () => {
+    // The header pill was `live` (green) with a bold 0 while the ledger was loading or could not
+    // be read: `items = data ?? []`, so the count of nothing-read looked like a count of zero.
+    try {
+      mountWith(() => Promise.reject(new Error('owner table is locked')));
+      await waitFor(() =>
+        expect(screen.getByText(/The local approval ledger could not be read/)).toBeInTheDocument());
+      const pill = document.querySelector('.pageHead .right .pill')!;
+      expect(pill).not.toBeNull();
+      expect(pill.className).not.toMatch(/\blive\b/);
+      expect(pill.textContent).not.toMatch(/^\s*0/);
+    } finally { cleanup(); }
+  });
+
+  it('a READ ledger with nothing pending does say 0, in green', async () => {
+    try {
+      mountWith(() => Promise.resolve([]));
+      await waitFor(() => expect(screen.getByText('Gate clear — no pending approvals')).toBeInTheDocument());
+      const pill = document.querySelector('.pageHead .right .pill')!;
+      expect(pill.className).toMatch(/\blive\b/);
+      expect(pill.textContent).toMatch(/^\s*0/);
+    } finally { cleanup(); }
+  });
+
   it('the queue notice does not call the local list a mirror of the engine queue', async () => {
     setup();
     await waitFor(() =>

@@ -760,7 +760,7 @@ Confirmed and not fixed. The Windows crates do not compile on the Linux box the 
 - **`apps/desktop/src-tauri/win-live/src/tcb_floor.rs`** — The end-to-end real-probe floor test passes on any refusal at all
   - Confirmed: the only assertion is is_err(). Added a comment in the test saying what it does not pin. Change: `assert!(matches!(r, Err(WinTcbViolation::WritableByUntrusted { .. })))` after making the fixture reach that check (owner must match first). cfg(windows) test.
 - **`apps/desktop/src/components/TrustSelftest.tsx`** — A trust self-test that ran but did not verify renders nothing at all
-  - Not touched: the task assigns TrustSelftest.tsx to another batch. I did not re-confirm the finding.
+  - **CLOSED 2026-10-08** with `R3-0013` (the cockpit record): the cause was the verdict gated on `production_verified`, which is false on every in-process run, so a GOOD run rendered nothing too. The panel gates on `bound && chain_bound` and has a did-not-verify branch.
 - **`apps/desktop/src/features/Analytics.tsx`** — 'Total across nodes' and the share percentages add counts that overlap and are unrelated
   - Confirmed (repo.rs returns projects and projects_active, tasks and tasks_open, plus unrelated counts). Not fixed: the total and the per-bar share are rendered by BarChart in components/charts/Chart.tsx, which is outside this batch and not named by the finding, and Analytics.reducedmotion.test.tsx is built around the animated total. The fix is an optional BarChart prop to suppress total/share plus a rewrite of that test, or a real partition from the backend.
 - **`apps/desktop/src/features/Command.tsx`** — The 'is this a wall refusal' text classifier is restated with a different vocabulary on at least nine surfaces

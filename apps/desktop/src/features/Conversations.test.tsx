@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeThread, receiptBadge } from './Conversations';
+import { fmtTime, mergeThread, receiptBadge } from './Conversations';
 import type { Message } from '../domain/entities';
 
 describe('receiptBadge — governed receipt trust badge (Wave 3a slice 3)', () => {
@@ -127,5 +127,25 @@ describe('mergeThread', () => {
   it('still appends a message that has not been persisted yet, in order', () => {
     const merged = mergeThread([m('msg-0')], [m('msg-1'), m('msg-2')]);
     expect(merged.map((x) => x.id)).toEqual(['msg-0', 'msg-1', 'msg-2']);
+  });
+});
+
+describe('fmtTime — a message time is shown for the timestamps the backend writes', () => {
+  // `brops_core::now()` returns epoch MILLISECONDS AS TEXT. `new Date("1700000000000")` is an
+  // Invalid Date, so this returned '' for every message the app has ever stored and the
+  // `{time && …}` beside each bubble never rendered.
+  it('formats epoch-milliseconds text, the shape every stored message carries', () => {
+    const shown = fmtTime('1700000000000');
+    expect(shown).not.toBe('');
+    expect(shown).toMatch(/\d{1,2}.\d{2}/);
+  });
+
+  it('still formats an ISO string', () => {
+    expect(fmtTime('2026-10-08T09:30:00Z')).not.toBe('');
+  });
+
+  it('an absent or unparseable time is blank, never "Invalid Date"', () => {
+    expect(fmtTime('')).toBe('');
+    expect(fmtTime('not a time')).toBe('');
   });
 });

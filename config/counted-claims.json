@@ -88,7 +88,7 @@
       ]
     },
     "frontend_test_files": {
-      "value": 85,
+      "value": 86,
       "command": "cd apps/desktop && npm test   (the 'Test Files' line)",
       "derive": {
         "glob": "apps/desktop/src/**/*.test.ts|apps/desktop/src/**/*.test.tsx"
@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 999,
+      "value": 1007,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
-        "date": "2026-10-02",
-        "head": "e33c7e9",
+        "date": "2026-10-08",
+        "head": "7bb4f7e",
         "environments": {
+          "Debian 13 (trixie) native @ 7bb4f7e + three cockpit findings (trust self-test, message time, approvals pill)": {
+            "ran": 1007,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ e33c7e9 + T-153": {
             "ran": 999,
             "skipped": 0
@@ -313,7 +317,8 @@
         781,
         790,
         801,
-        984
+        984,
+        999
       ]
     },
     "a11y_tests": {
