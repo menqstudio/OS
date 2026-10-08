@@ -163,6 +163,26 @@ function Sigil({ name, state = 'idle' }: { name: string; state?: string }) {
 // The backend writes epoch-milliseconds AS TEXT, which `new Date(text)` reads as an Invalid Date —
 // so this returned '' for every stored message and no time was ever shown beside a bubble.
 // `parseTimestamp` is the one shared step that knows the shape.
+/**
+ * The agents a message @mentions, in the order the message names them.
+ *
+ * The name must END there: the next character may not be a letter, a digit or an underscore, in
+ * any script. This was `(\b|\s|$)` without the `u` flag, and `\b` is a boundary between an ASCII
+ * word character and anything else — so after a name ending in an Armenian or Cyrillic letter
+ * there was no boundary before a comma or a full stop, and "@Գևորգ, …" routed to nobody.
+ * It also returned roster order while the comment at its call site promised the order named.
+ */
+export function mentionedAgents(body: string, agentNames: readonly string[]): string[] {
+  const found: { name: string; at: number }[] = [];
+  for (const name of agentNames) {
+    // Syntax characters only. Under the `u` flag an escaped `-` outside a class is a SyntaxError.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const at = body.search(new RegExp(`@${escaped}(?![\\p{L}\\p{N}_])`, 'iu'));
+    if (at !== -1) found.push({ name, at });
+  }
+  return found.sort((a, b) => a.at - b.at).map((f) => f.name);
+}
+
 export function fmtTime(raw: string): string {
   const d = parseTimestamp(raw);
   if (!d) return '';
@@ -404,9 +424,7 @@ function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }:
       // #3 mention routing: if the message @mentions specific agents, THEY answer (in the
       // order named); otherwise a group room falls back to the first couple of specialists
       // and a direct chat to the selected agent.
-      const mentioned = agentNames.filter((n) =>
-        new RegExp(`@${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\b|\\s|$)`, 'i').test(body),
-      );
+      const mentioned = mentionedAgents(body, agentNames);
       const responders = mentioned.length
         ? mentioned
         : isGroup

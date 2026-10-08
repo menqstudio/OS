@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmtTime, mergeThread, receiptBadge } from './Conversations';
+import { fmtTime, mergeThread, receiptBadge, mentionedAgents } from './Conversations';
 import type { Message } from '../domain/entities';
 
 describe('receiptBadge — governed receipt trust badge (Wave 3a slice 3)', () => {
@@ -147,5 +147,53 @@ describe('fmtTime — a message time is shown for the timestamps the backend wri
   it('an absent or unparseable time is blank, never "Invalid Date"', () => {
     expect(fmtTime('')).toBe('');
     expect(fmtTime('not a time')).toBe('');
+  });
+});
+
+// Mention routing matched `@Name(\b|\s|$)`. `\b` is a boundary between an ASCII word character and
+// anything else, so after a name that ENDS in a non-ASCII letter there is no `\b` before a comma or
+// a full stop: "@Գևորգ, …" routed to nobody and the room's default responders answered instead.
+// And the comment said mentioned agents answer "in the order named"; they answered in roster order.
+describe('mentionedAgents — who a message @mentions, in the order it names them', () => {
+  const ROSTER = ['Bro', 'Գևորգ', 'Анна', 'Forge'];
+
+  it.each([
+    ['@Գևորգ, նայիր սա', ['Գևորգ']],
+    ['@Գևորգ.', ['Գևորգ']],
+    ['спасибо, @Анна!', ['Анна']],
+    ['@Bro, look', ['Bro']],
+    ['@forge please', ['Forge']],
+    ['@Գևորգ', ['Գևորգ']],
+  ])('%s', (body, expected) => {
+    expect(mentionedAgents(body, ROSTER)).toEqual(expected);
+  });
+
+  it('does not match a longer word that merely starts with the name', () => {
+    expect(mentionedAgents('@Brother is here', ROSTER)).toEqual([]);
+    expect(mentionedAgents('@Գևորգյան եկավ', ROSTER)).toEqual([]);
+    expect(mentionedAgents('@Bro_2 ran', ROSTER)).toEqual([]);
+    expect(mentionedAgents('@Forge9', ROSTER)).toEqual([]);
+  });
+
+  it('answers in the order the message names them, not roster order', () => {
+    expect(mentionedAgents('@Forge first, then @Bro', ROSTER)).toEqual(['Forge', 'Bro']);
+    expect(mentionedAgents('@Анна и @Գևորգ', ROSTER)).toEqual(['Анна', 'Գևորգ']);
+  });
+
+  it('treats a name with regex characters as text', () => {
+    expect(mentionedAgents('@a.b ok', ['a.b', 'axb'])).toEqual(['a.b']);
+    expect(mentionedAgents('@axb ok', ['a.b'])).toEqual([]);
+  });
+
+  it('a name with a hyphen, a slash or a space is matched and does not break the pattern', () => {
+    // Under the `u` flag an escaped hyphen outside a class is a SyntaxError, not a no-op.
+    expect(mentionedAgents('@code-audit go', ['code-audit'])).toEqual(['code-audit']);
+    expect(mentionedAgents('@a/b go', ['a/b'])).toEqual(['a/b']);
+    expect(mentionedAgents('@Bro Two, hi', ['Bro Two'])).toEqual(['Bro Two']);
+  });
+
+  it('a message that mentions nobody yields nobody', () => {
+    expect(mentionedAgents('hello', ROSTER)).toEqual([]);
+    expect(mentionedAgents('', ROSTER)).toEqual([]);
   });
 });

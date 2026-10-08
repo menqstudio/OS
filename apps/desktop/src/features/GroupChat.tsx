@@ -464,6 +464,10 @@ function ConsensusDeck({ roomsVersion, onPosted }: { roomsVersion: number; onPos
   // cards from lingering under a room that has reported nothing.
   useEffect(() => {
     setDelegations((prev) => (prev === NO_GROUP_DELEGATIONS ? prev : NO_GROUP_DELEGATIONS));
+    // The same goes for what the previous room's asks failed with. These two were left standing,
+    // so "no position was collected from Scout" stayed under a room nobody had asked anything.
+    setAskErrors((prev) => (prev.length === 0 ? prev : []));
+    setFormError(null);
   }, [roomId]);
 
   /**

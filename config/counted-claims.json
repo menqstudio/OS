@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1106,
+      "value": 1118,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "ae245b2",
+        "head": "e9ef07e",
         "environments": {
+          "Debian 13 (trixie) native @ e9ef07e + a mention after a non-ASCII name, and a room's stale errors": {
+            "ran": 1118,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ ae245b2 + a stored language that crashed every page, and four more": {
             "ran": 1106,
             "skipped": 0
@@ -398,7 +402,8 @@
         1057,
         1059,
         1075,
-        1093
+        1093,
+        1106
       ]
     },
     "a11y_tests": {
