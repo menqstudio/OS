@@ -15,6 +15,7 @@ import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { GroupChat } from './GroupChat';
 import { formatConsensusOpening } from './groupChatConsensus';
+import { STR as GC_STR } from './GroupChat.strings';
 
 const ROOM = {
   id: 'g-1', kind: 'group', title: 'Design room', messageCount: 4,
@@ -234,5 +235,44 @@ describe('GroupChat — a position posted in the thread reaches the deck', () =>
     await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('post_user_message', expect.anything()));
 
     await waitFor(() => expect(within(d).getByText('CONSENSUS REACHED')).toBeInTheDocument());
+  });
+});
+
+describe('GroupChat — a round the deck opens appears in the thread above it', () => {
+  // The other direction of the same seam. The deck posts the opening message into the room; the
+  // thread had read the room once and went on showing a transcript without it.
+  it('the opening the deck posted is in the thread without a remount', async () => {
+    const log: ReturnType<typeof msg>[] = [];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === 'list_conversations') return Promise.resolve([ROOM]);
+      if (cmd === 'list_messages') return Promise.resolve(log.map((m) => ({ ...m })));
+      if (cmd === 'post_user_message') {
+        const made = msg(`m-${log.length + 1}`, String(args?.author ?? 'gev'), String(args?.body ?? ''), 'user');
+        log.push(made);
+        return Promise.resolve(made);
+      }
+      if (cmd === 'list_agents') return Promise.resolve([agent('scout', 'Scout'), agent('analyst', 'Analyst')]);
+      if (cmd === 'list_conversation_participants') return Promise.resolve(['Scout', 'Analyst']);
+      if (cmd === 'ai_status') {
+        return Promise.resolve({ provider: 'claude-cli', model: 'm', ready: true, detail: 'ok', governed: false });
+      }
+      if (cmd === 'search_all') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    render(<AppProvider><ToastProvider><GroupChat /></ToastProvider></AppProvider>);
+    await deck();
+    const thread = () => document.querySelector('.chat-canvas')!;
+    await waitFor(() => expect(thread()).not.toBeNull());
+    expect(thread().textContent).not.toContain('Does the deck reach the thread');
+
+    fireEvent.change(await screen.findByLabelText(GC_STR.questionLabel.en), {
+      target: { value: 'Does the deck reach the thread' },
+    });
+    const open = await screen.findByRole('button', { name: GC_STR.openRound.en });
+    await waitFor(() => expect(open).toBeEnabled());
+    fireEvent.click(open);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('post_user_message', expect.anything()));
+
+    await waitFor(() => expect(thread().textContent).toContain('Does the deck reach the thread'));
   });
 });

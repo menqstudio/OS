@@ -388,7 +388,7 @@ function RoomDelegations({ roomId, state }: { roomId: string; state: GroupDelega
 
 /** The consensus deck for one group room: every round the transcript records, plus
  *  the form that opens a new one and actually asks the participants. */
-function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
+function ConsensusDeck({ roomsVersion, onPosted }: { roomsVersion: number; onPosted: () => void }) {
   const { t, lang, openEntity } = useApp();
   const L = (k: Key) => STR[k][lang] ?? STR[k].en;
 
@@ -553,6 +553,8 @@ function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
     setAskErrors(errors);
     setBusy(false);
     messages.reload();
+    // The opening and every reply were posted into the room the thread above is showing.
+    onPosted();
   };
 
   const askMissing = async () => {
@@ -567,6 +569,7 @@ function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
     setAskErrors(errors);
     setBusy(false);
     messages.reload();
+    onPosted();
   };
 
   const loading = rooms.loading && rooms.data === null;
@@ -729,11 +732,17 @@ function ConsensusDeck({ roomsVersion }: { roomsVersion: number }) {
  */
 export function GroupChat() {
   const [roomsVersion, setRoomsVersion] = useState(0);
+  // The same seam the other way: the deck posts into the room, and the thread re-reads.
+  const [deckPosts, setDeckPosts] = useState(0);
   return (
     <div className="v-group">
       <style>{VIEW_CSS}</style>
-      <Conversations kind="group" onListChanged={() => setRoomsVersion((v) => v + 1)} />
-      <ConsensusDeck roomsVersion={roomsVersion} />
+      <Conversations
+        kind="group"
+        onListChanged={() => setRoomsVersion((v) => v + 1)}
+        reloadSignal={deckPosts}
+      />
+      <ConsensusDeck roomsVersion={roomsVersion} onPosted={() => setDeckPosts((v) => v + 1)} />
     </div>
   );
 }

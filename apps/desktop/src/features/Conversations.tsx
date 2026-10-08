@@ -200,9 +200,13 @@ function CopyButton({ text, label, doneLabel }: { text: string; label: string; d
   );
 }
 
-function MessageThread({ conversation, onActivity, onDelegation }: {
+function MessageThread({ conversation, onActivity, onDelegation, reloadSignal }: {
   conversation: Conversation;
   onActivity: () => void;
+  /** Changes when something OUTSIDE this thread posted into the room it shows (the group page's
+   *  consensus deck opens a round by posting). The thread re-reads on it; without it the
+   *  transcript stayed as it was when the thread mounted. */
+  reloadSignal?: number;
   /** Called once per delegation frame this thread's own stream reported, with the conversation
    *  it belongs to. The thread does not keep the ledger — the workspace does, because the
    *  surface that draws it sits outside this component and must not drift from what is open. */
@@ -210,7 +214,7 @@ function MessageThread({ conversation, onActivity, onDelegation }: {
 }) {
   const { t, lang, openEntity } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
-  const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id]);
+  const s = useAsync(() => desktop.listMessages(conversation.id), [conversation.id, reloadSignal]);
   const ai = useAsync(() => desktop.aiStatus(), []);
   const agents = useAsync(() => desktop.listAgents(), []);
   // The explicit room roster (0017). When set, it drives who answers a group message.
@@ -917,7 +921,12 @@ function RenameConversationForm({ conversation, onClose, onRenamed }:
  * other way to learn of it — the group page's consensus deck read the rooms once at mount and
  * went on offering a list that no longer matched the one above it.
  */
-export function Conversations({ kind, onListChanged }: { kind: Kind; onListChanged?: () => void }) {
+export function Conversations({ kind, onListChanged, reloadSignal }: {
+  kind: Kind;
+  onListChanged?: () => void;
+  /** Passed to the open thread: see `MessageThread`. */
+  reloadSignal?: number;
+}) {
   const { t, lang, focus, clearFocus, setSelectedConversation } = useApp();
   const L = (k: keyof typeof STR) => STR[k][lang] ?? STR[k].en;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1102,6 +1111,7 @@ export function Conversations({ kind, onListChanged }: { kind: Kind; onListChang
                 key={active.id}
                 conversation={active}
                 onActivity={() => { s.reload(); onListChanged?.(); }}
+                reloadSignal={reloadSignal}
                 onDelegation={onDelegation}
               />
             );
