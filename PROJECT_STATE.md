@@ -67,8 +67,8 @@ therefore rewrites a plaintext `.head` and produces no `.head.sig`. This is O-2 
 never run outside a test.
 
 **The app version is stated five times in four files;** `tools/check_version_parity.py` refuses drift.
-No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
-release policy the Owner has not stated (`T-063`).
+No `v*` tag is compared and `release.yml` has never run — yet an UNSIGNED `brops-desktop-v0.1.0`
+release is published by hand (found 2026-10-08). The tag policy is the Owner's (`T-063`).
 
 **Branch protection is in force again — the repository is public (read live 2026-10-08).**
 All 35 contexts in `config/required-checks.json` are required on `main`, with `strict` and

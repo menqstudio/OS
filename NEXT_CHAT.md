@@ -79,11 +79,9 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 **31 pull requests, 121 files and 10,599 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` on 2026-09-21; it named the NINTH round until then. See `docs/README_CLAIM_HISTORY.md` §11.)*
 
-**Two one-line edits wait on the Owner** *(a third, the trust-anchor context, is done in `#286`)*:
-`.github/supply-chain/gitleaks.toml` carries a false positive that any edit can wake — the committed
-operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured a 57-character prefix
-at one file size and not at another (79,665 bytes red, 79,744 green) — and
-`config/required-checks.json` should promote the new Windows tools job once it has one green run.
+**Two things wait on the Owner** *(the gitleaks false positive is fixed, 2026-10-08)*: an UNSIGNED
+`BroPS 0.1.0` release is published and marked *Latest* — make it a draft — and the Windows tools job,
+green six `main` runs running, must be required in the file and in live protection at one moment.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
 protection is in force again (public; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 

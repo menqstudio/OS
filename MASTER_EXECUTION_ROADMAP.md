@@ -122,8 +122,8 @@ These apply to **every phase**. A phase section never repeats them; it only name
 - **Enforcement-hook wedge:** the engine ships `.claude/settings.json` hooks (`bro_hook.py`) that can
   crash on Windows with a cp1252 `UnicodeEncodeError` and fail-closed-cascade the session. If it wedges:
   set `PYTHONUTF8=1` and relaunch, or rename `settings.json`. Hooks load from the repo **root** only.
-- **Commit identity:** `user.name "MenQ"`, `user.email "menqstudio@gmail.com"`. End every commit
-  message with: `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- **Commit identity:** `user.name "MenQ"`, `user.email "menqstudio@gmail.com"`, and **no
+  `Co-Authored-By` line** (Owner, 2026-10-08; this bullet required a Claude trailer until then).
 - **Toolchain:** cargo 1.97.1, node 20.20.2, npm 10.8.2. *(This line said cargo 1.96 / node 24 / npm 11 — `tools/check_doc_claims.py` now compares it against the machine.)* Tauri Windows build needs
   `apps/desktop/src-tauri/icons/icon.ico` (already generated).
 
