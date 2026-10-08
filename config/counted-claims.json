@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1027,
+      "value": 1028,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "427fafa",
+        "head": "f8bf910",
         "environments": {
+          "Debian 13 (trixie) native @ f8bf910 + the rank slider answers a pointer": {
+            "ran": 1028,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 427fafa + a governed-turn reply is correlated with its request": {
             "ran": 1027,
             "skipped": 0
@@ -348,7 +352,8 @@
         1014,
         1019,
         1020,
-        1021
+        1021,
+        1027
       ]
     },
     "a11y_tests": {

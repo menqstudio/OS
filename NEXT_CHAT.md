@@ -50,7 +50,7 @@ Run these. The numbers below have been wrong in every audit round so far.
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1425 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 1027 tests / 87 files
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 1028 tests / 87 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_contrast.py           # 98 text pairs clear WCAG AA in both themes
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
