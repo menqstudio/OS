@@ -44,7 +44,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | Windows | |
 |---|---|
 | engine (Python) · 2026-09-21 | not re-measured |
-| `tools/` self-tests · 2026-10-05 | 1766 OK |
+| `tools/` self-tests · 2026-10-08 | 1769 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
@@ -67,8 +67,8 @@ therefore rewrites a plaintext `.head` and produces no `.head.sig`. This is O-2 
 never run outside a test.
 
 **The app version is stated five times in four files;** `tools/check_version_parity.py` refuses drift.
-No `v*` tag is compared and `release.yml` has never run — yet an UNSIGNED `brops-desktop-v0.1.0`
-release is published by hand (found 2026-10-08). The tag policy is the Owner's (`T-063`).
+No `v*` tag is compared and `release.yml` has never run. An UNSIGNED `brops-desktop-v0.1.0` release,
+published by hand, is a DRAFT since 2026-10-08. The tag policy is the Owner's (`T-063`).
 
 **Branch protection is in force again — the repository is public (read live 2026-10-08).**
 All 35 contexts in `config/required-checks.json` are required on `main`, with `strict` and

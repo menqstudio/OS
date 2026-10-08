@@ -12,7 +12,12 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 
 > **2026-10-08 — a zero-trust read of the whole position: four things found, two of them yours.**
 >
-> **1. A release is PUBLISHED on this public repository, and nothing in the canon says so.**
+> **1. DONE the same day — the release is a DRAFT.** The Owner drafted it on 2026-10-08. Read
+> afterwards: the owner's token sees `"draft": true`; an outside account sees **0** releases and
+> `releases/latest` answers 404. Its target, a branch that no longer exists, had to be moved to
+> `main` for GitHub to accept the edit (`target_commitish is invalid` otherwise); the tag did not
+> move. What the draft becomes — deleted, or re-issued signed from `main` — is `T-063`, still
+> yours. What was found, kept as written: a release was PUBLISHED on this public repository.
 > `BroPS 0.1.0 desktop`, tag `brops-desktop-v0.1.0`, published 2026-08-03, marked *Latest*, not a
 > draft, with two Windows installers: `BroPS_0.1.0_x64-setup.exe` (4,670,233 bytes) and
 > `BroPS_0.1.0_x64_en-US.msi` (6,467,584 bytes). Both were downloaded and read: **neither is
@@ -72,7 +77,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > evidence-based cleanup classification, cleanup, and final verification. Preserve SSH, Codex,
 > networking, package management, certificates, and all ambiguous data; no destructive action
 > before the Phase 3 report — ChatGPT — Review — `chore/deployment-host-audit`*. That branch has no
-> commit of its own. The row is preserved here so the stash can be dropped; whether `T-114` is
+> commit of its own. The Owner dropped the stash on 2026-10-08 (`git stash list` is empty); whether `T-114` is
 > still wanted is the Owner's to say.
 
 > **2026-10-08 — settled: the repository is public again and `main` is protected (`T-168`).**

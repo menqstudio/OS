@@ -150,6 +150,43 @@ class FailingSet(unittest.TestCase):
         self.assertEqual(cc.main(["--manifest", path]), 0)
 
 
+class TheVerdictIsOnTheRawRatio(unittest.TestCase):
+    """`I-04`: an accessibility verdict decided on a rounded number.
+
+    `passed` was once `round(ratio, 2) >= threshold`, and two shipped pairs at 4.4995 and 4.4996
+    passed WCAG AA by printing 4.50. The comparison moved to the raw ratio, an independent audit
+    confirmed it -- and nothing in this file defended it: on 2026-10-08 the rounded comparison was
+    put back and all 34 tests here stayed green. These are the tests that go red.
+    """
+
+    #: 4.49993... against white: below AA, and 4.50 to two decimals.
+    JUST_UNDER = "#d33980"
+
+    def _manifest(self, fg):
+        return {"thresholds": {"normal": 4.5, "large": 3.0},
+                "palettes": {"light": {"surface": "#ffffff", "ink": fg}},
+                "pairs": [{"id": "ink-on-surface", "fg": "ink", "bg": "surface"}]}
+
+    def test_the_fixture_is_the_case_the_rounding_hid(self):
+        ratio = cc.contrast_ratio(self.JUST_UNDER, "#ffffff")
+        self.assertLess(ratio, 4.5)
+        self.assertEqual(round(ratio, 2), 4.5, "the fixture must ROUND to a pass or it tests nothing")
+
+    def test_a_ratio_that_rounds_to_the_threshold_from_below_fails(self):
+        (result,) = cc.evaluate(self._manifest(self.JUST_UNDER))
+        self.assertFalse(result.passed)
+        self.assertEqual(cc.failures([result]), [result])
+        # ...and the reader is shown WHY: the displayed value keeps the digit that decided.
+        self.assertLess(result.ratio, 4.5)
+        self.assertNotEqual(result.ratio, 4.5)
+
+    def test_the_control_one_step_darker_passes(self):
+        darker = "#d23980"
+        self.assertGreaterEqual(cc.contrast_ratio(darker, "#ffffff"), 4.5)
+        (result,) = cc.evaluate(self._manifest(darker))
+        self.assertTrue(result.passed)
+
+
 class FailClosed(unittest.TestCase):
     def test_unknown_token_raises(self):
         m = json.loads(json.dumps(_PASSING_MANIFEST))

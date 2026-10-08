@@ -79,8 +79,8 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 **93 pull requests, 886 files and 104,780 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `a90ca90`, 2026-10-08; this said 31 / 121 / 10,599 for seventeen days.)*
 
-**Two things wait on the Owner** *(the gitleaks false positive is fixed, 2026-10-08)*: an UNSIGNED
-`BroPS 0.1.0` release is published and marked *Latest* — make it a draft — and the Windows tools job,
+**Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:
+commissioning the next independent audit — 93 pull requests are unaudited — and the Windows tools job,
 green six `main` runs running, must be required in the file and in live protection at one moment.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
 protection is in force again (public; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
