@@ -181,7 +181,9 @@ export function Home() {
     // T-057: how many of the plotted events are FABRICATED. Counted here rather
     // than filtered out — hiding them would change the picture without saying so,
     // and the honest fix is to draw the same line and tell the reader what is in it.
-    const seeded = rows.filter((e) => e.source === 'seed').length;
+    // Over the SAME rows the total counts: a seeded row whose time cannot be read is not on the
+    // line, and was still counted as one "of them".
+    const seeded = rows.filter((e) => e.source === 'seed' && parseTime(e.createdAt) != null).length;
     if (times.length === 0)
       return { points: [] as { label: string; value: number }[], total: 0, peak: 0, seeded: 0 };
     const min = times[0];

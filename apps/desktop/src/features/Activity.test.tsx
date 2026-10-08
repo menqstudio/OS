@@ -145,3 +145,40 @@ describe('the rate histogram does not state a unit its bins do not have', () => 
     expect(ACT_STR.eventsFlow[lang]).not.toMatch(/\/\s*min|\/\s*Ր|\/\s*мин/i);
   });
 });
+
+// "Every number shown is DERIVED", and the rate was `Math.max(1, Math.round(count / spanMin))`:
+// three events across an hour — 0.05 a minute — were announced and displayed as 1 per minute.
+describe('Activity — the rate is the quotient, not a floor', () => {
+  it('three events across an hour are not "about 1 per minute"', async () => {
+    const at = (min: number) => String(1700000000000 + min * 60000);
+    const row = (id: string, min: number) => ({
+      id, eventType: 'task.created', actorType: 'user', actorId: 'local-operator',
+      entityType: 'task', entityId: `t-${id}`, payload: null, source: null, createdAt: at(min),
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_activity') return Promise.resolve([row('a', 0), row('b', 30), row('c', 60)]);
+      return Promise.resolve(null);
+    });
+    const { container } = render(<AppProvider><ToastProvider><Activity /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(container.querySelector('.pa-sr')?.textContent).toMatch(/3 activity beats/));
+    const said = container.querySelector('.pa-sr')!.textContent!;
+    expect(said).not.toMatch(/About 1 per minute/);
+    expect(said).toMatch(/About <1 per minute/);
+  });
+
+  it('a real rate above one is still rounded and shown', async () => {
+    const row = (i: number) => ({
+      id: `e-${i}`, eventType: 'task.created', actorType: 'user', actorId: 'local-operator',
+      entityType: 'task', entityId: `t-${i}`, payload: null, source: null,
+      createdAt: String(1700000000000 + i * 10000),
+    });
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'list_activity') return Promise.resolve(Array.from({ length: 13 }, (_, i) => row(i)));
+      return Promise.resolve(null);
+    });
+    const { container } = render(<AppProvider><ToastProvider><Activity /></ToastProvider></AppProvider>);
+    await waitFor(() => expect(container.querySelector('.pa-sr')?.textContent).toMatch(/13 activity beats/));
+    // 13 events over 2 minutes
+    expect(container.querySelector('.pa-sr')!.textContent).toMatch(/About 7 per minute/);
+  });
+});

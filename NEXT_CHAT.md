@@ -5,16 +5,16 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `a1c0c28`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `81f4751`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `a1c0c28`.** PR #372 on `cockpit/bugs-3` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `81f4751`.** PR #373 on `cockpit/bugs-4` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**OWNER 2g, 2h:** dead cockpit controls; six commands refused to the window (read, not run). **T-145:** 64 closed.
+**OWNER 2g, 2h:** dead cockpit controls; six commands refused to the window (read, not run). **T-145:** 68 closed.
 
 **Next: T-020's FW-1 correction MERGED as `#219` (`2a50081`) and is NOT approved.** B1-B7 and C1, C2,
 C4, C6, C7 are done and measured — the full account and the B/C list live only in `#219`'s body;
@@ -52,7 +52,7 @@ Run these. The numbers below have been wrong in every audit round so far.
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1430 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 1135 tests / 87 files
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 1144 tests / 87 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_contrast.py           # 98 text pairs clear WCAG AA in both themes
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing

@@ -53,7 +53,8 @@ export const STR = {
   // --- Metric strip / core grid ---------------------------------------------
   memoriesStore: { en: 'memories · store', hy: 'հիշողություն · store', ru: 'воспоминаний · хранилище' },
   pinned: { en: 'pinned', hy: 'ամրակցված', ru: 'закреплено' },
-  sealedRefs: { en: 'sealed refs', hy: 'կնքված հղում', ru: 'запечатанные ссылки' },
+  // `blockedIds.size`: memories that CONTAIN a sealed reference, not the references themselves.
+  sealedRefs: { en: 'memories with sealed refs', hy: 'կնքված հղումով հիշողություն', ru: 'воспоминаний с запечатанными ссылками' },
   memoriesUnit: { en: 'memories', hy: 'հիշողություն', ru: 'воспоминаний' },
 
   // --- Live region ----------------------------------------------------------

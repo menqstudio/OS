@@ -221,5 +221,6 @@ export const STR = {
     hy: 'Ընտրիր տողը՝ դահլիճը բացելու համար',
     ru: 'Выберите строку, чтобы открыть её палату',
   },
-  activeDecisions: { en: 'active decisions', hy: 'ակտիվ որոշում', ru: 'активных решений' },
+  // The figure beside it is `ledger.length` — every row, settled ones included.
+  activeDecisions: { en: 'decisions', hy: 'որոշում', ru: 'решений' },
 } as const;

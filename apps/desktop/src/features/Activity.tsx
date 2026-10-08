@@ -134,7 +134,10 @@ export function Activity() {
     const latest = ts.length ? Math.max(...ts) : null;
     const earliest = ts.length ? Math.min(...ts) : null;
     const spanMin = latest != null && earliest != null && latest > earliest ? (latest - earliest) / 60000 : 0;
-    const rate = spanMin > 0 ? Math.max(1, Math.round(count / spanMin)) : null; // events / min
+    // The quotient, not a floor. This was `Math.max(1, Math.round(count / spanMin))`, so three
+    // events across an hour were shown and announced as 1 per minute. Below one a minute it says so.
+    const perMin = spanMin > 0 ? count / spanMin : null;
+    const rate: number | '<1' | null = perMin === null ? null : perMin < 1 ? '<1' : Math.round(perMin); // events / min
     const types = new Set(events.map((e) => e.eventType)).size;
     return { count, latest, earliest, spanMin, rate, types };
   }, [events]);

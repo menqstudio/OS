@@ -243,7 +243,7 @@ export function rateSummaryStr(lang: Lang, count: number, bins: number, peak: nu
 export function liveTextStr(
   lang: Lang,
   count: number,
-  rate: number | null,
+  rate: number | '<1' | null,
   focus: { pos: number; total: number; eventType: string } | null,
 ): string {
   if (lang === 'hy') {
