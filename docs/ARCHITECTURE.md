@@ -60,6 +60,9 @@ below. The engine answers from its own stores
 (`bro_control_room_api.governance_read`), and `bridge/engine_sidecar.py` relays that reply
 **verbatim**, so the three-valued shape survives the hop.
 
+**As shipped the window cannot invoke the four reads**: they are outside the ACL manifest, and tauri
+refuses such a command (read in its source, not run). See `docs/OWNER_ACTION_REQUIRED.md` §2h.
+
 **Three values, and the third is not an error.** A read is `ok` (records, possibly zero), `blocked`
 (the engine was reached and refused) or `unreachable` (no engine). `blocked` and `unreachable` are
 first-class states rather than exceptions, because a fail-closed engine is an honest answer and a page
