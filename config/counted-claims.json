@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1028,
+      "value": 1030,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "f8bf910",
+        "head": "b0887cb",
         "environments": {
+          "Debian 13 (trixie) native @ b0887cb + a departing thread cancels only its own turn": {
+            "ran": 1030,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ f8bf910 + the rank slider answers a pointer": {
             "ran": 1028,
             "skipped": 0
@@ -353,7 +357,8 @@
         1019,
         1020,
         1021,
-        1027
+        1027,
+        1028
       ]
     },
     "a11y_tests": {
