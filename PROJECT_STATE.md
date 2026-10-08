@@ -1,7 +1,7 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-08 — 144 pull requests merged (`#219`–`#363`), `main` at
-`fb18b78`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-08 — 147 pull requests merged (`#219`–`#366`), `main` at
+`1b5c860`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
@@ -11,7 +11,7 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `1b5c860`.** PR #367 on `rust/undefended` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `cbe4a76`.** PR #368 on `ci/refusal2-runs` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
