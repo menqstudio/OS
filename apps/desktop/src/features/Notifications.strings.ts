@@ -39,11 +39,13 @@ export const STR = {
   statTotal: { en: 'signals', hy: 'ազդանշան', ru: 'сигналов' },
   statUnread: { en: 'unread', hy: 'չկարդացված', ru: 'непрочитано' },
   statShown: { en: 'shown', hy: 'ցուցադրված', ru: 'показано' },
-  inboxHeading: { en: 'Ranked intake', hy: 'Դասակարգված մուտք', ru: 'Ранжированный поток' },
+  // The feed is in STORE order — `ORDER BY created_at DESC`. This said "Ranked intake · sorted by
+  // priority"; only the hero's lead signal is ranked, the list under this heading is not.
+  inboxHeading: { en: 'Intake', hy: 'Մուտք', ru: 'Входящий поток' },
   inboxNote: {
-    en: 'sorted by priority · pick a band to filter',
-    hy: 'առաջնահերթությամբ դասավորված · սեղմիր շերտը՝ զտելու',
-    ru: 'отсортировано по приоритету · выберите полосу для фильтрации',
+    en: 'newest first · pick a band to filter',
+    hy: 'նորից հին · սեղմիր շերտը՝ զտելու',
+    ru: 'сначала новые · выберите полосу для фильтрации',
   },
   unitSignal: { en: 'sig', hy: 'ազդ', ru: 'сиг' },
   gateHeading: {

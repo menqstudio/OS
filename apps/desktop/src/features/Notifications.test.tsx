@@ -14,6 +14,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Notifications } from './Notifications';
+import { STR as NTF_STR } from './Notifications.strings';
 
 const NOTE = {
   id: 'n-1',
@@ -112,5 +113,22 @@ describe('Notifications — a key pressed on a row\'s own button belongs to that
     row.focus();
     expect(fireEvent.keyDown(row, { key: 'Enter' })).toBe(false);
     await waitFor(() => expect(document.querySelector('.nsig-body')).not.toBeNull());
+  });
+});
+
+// The feed is rendered in the order the store returns it — `ORDER BY created_at DESC` — and its
+// heading said "Ranked intake · sorted by priority". Only the hero's lead signal is ranked.
+describe('Notifications — the feed is not called ranked or sorted by priority', () => {
+  it.each([
+    ['en', /priorit|ranked/i],
+    ['hy', /առաջնահերթ|դասակարգված/],
+    ['ru', /приоритет|ранжир/i],
+  ] as const)('%s heading and note claim no priority order', (lang, claim) => {
+    expect(NTF_STR.inboxHeading[lang]).not.toMatch(claim);
+    expect(NTF_STR.inboxNote[lang]).not.toMatch(claim);
+  });
+
+  it('the note says what the order IS', () => {
+    expect(NTF_STR.inboxNote.en).toMatch(/newest first/i);
   });
 });
