@@ -70,10 +70,10 @@ never run outside a test.
 No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
 release policy the Owner has not stated (`T-063`).
 
-**Branch protection is NOT in force — the repository is private again (measured 2026-10-05).**
-GitHub answers its admin *"Upgrade to GitHub Pro or make this repository public"*, so the 35
-contexts in `config/required-checks.json` bind nothing and merges are gated by the hook alone.
-`check_repo_state.py` is RED on it locally (`T-168`); the first time is in `docs/archive/`.
+**Branch protection is in force again — the repository is public (read live 2026-10-08).**
+All 35 contexts in `config/required-checks.json` are required on `main`, with `strict` and
+`enforce_admins`; `check_repo_state.py` is GREEN. Private from 2026-10-05 it had none (`T-168`):
+on this plan a private repository carries no protection, and going private deletes the rules.
 
 **Provisioning is Windows-only.** Sealing the anchor refuses on POSIX and provisioning aborts startup,
 so the first-launch trust path is unreachable on the Debian dev box.

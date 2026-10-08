@@ -10,7 +10,18 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > trust and no person carries a key. From 2026-09-20 to 2026-09-30 this page asked you to mint an
 > offline root anyway; that contradicted your decision and was removed in T-130. See §0.
 
-> **2026-10-05 — `main` has no branch protection: the repository is private again (`T-168`).**
+> **2026-10-08 — settled: the repository is public again and `main` is protected (`T-168`).**
+> Read live on 2026-10-08, asked as the repository's owner: `GET /repos/menqstudio/OS` answers
+> `"private": false`, and `GET /branches/main/protection` answers with **35** required contexts —
+> the same 35 as `config/required-checks.json`, none missing and none extra — `strict: true`,
+> `enforce_admins: true`, linear history, no force pushes, no deletions. `tools/check_repo_state.py`
+> prints GREEN. As on 2026-09-19, going private had deleted the rules and coming back did not
+> restore them; they were re-applied from the file. *(That the Owner ordered the flip, and that the
+> rules were re-applied the same day, is repeated from the session handoff, not measured here; what
+> is measured is the state above.)* **Nothing is asked of you on this item.** The trade stands as
+> written below: private on this plan means no gate.
+
+> **2026-10-05 — kept for the record, settled on 2026-10-08 (above): `main` had no branch protection while the repository was private (`T-168`).**
 > Asked as the repository's admin, `GET /branches/main/protection` answers **403** *"Upgrade to
 > GitHub Pro or make this repository public to enable this feature"*. The 35 contexts in
 > `config/required-checks.json` bind nothing; a merge is refused only by the session hook
