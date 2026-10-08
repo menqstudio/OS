@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `front-page-v1` — `main` @ `99c8c3c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `7bd1d69`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **⏭️ CURRENT ACTIVE: PR #341 · branch `front-page-v1`** (base `main`, tip `99c8c3c`, task unstated).
+> **✅ SETTLED as of `main` `7bd1d69`.** PR #342 on `settle/after-341` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> Repository front page standard v1 (MenQ-Standard CR-0011): cover, start-here links and a four-line summary at the top of the README; the rest of the README is untouched.
+> **Next:** Owner: the repo is public now; protect main (T-168).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
