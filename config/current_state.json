@@ -120,7 +120,7 @@
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #342 (settle/after-341) settles the state at main 7bd1d69. Next: Owner: the repository is public since 08.10.2026, so branch protection for main can be turned on (T-168); the standing items are in docs/OWNER_ACTION_REQUIRED.md.",
+    "current": "PR #342 (settle/after-341) settles the state at main 7bd1d69. Next: Owner: the repo is public now; protect main (T-168).",
     "_note": "The carrier is current_workflow_pr (#342 on settle/after-341). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {

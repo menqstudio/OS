@@ -6,7 +6,7 @@
 <!-- BANNER -->
 > **✅ SETTLED as of `main` `7bd1d69`.** PR #342 on `settle/after-341` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: the repository is public since 08.10.2026, so branch protection for main can be turned on (T-168); the standing items are in docs/OWNER_ACTION_REQUIRED.md.
+> **Next:** Owner: the repo is public now; protect main (T-168).
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
