@@ -216,6 +216,7 @@ export const ru: Record<DictKey, string> = {
   'files.saved': 'Файл сохранён',
 
   'state.offline': 'Бэкенд недоступен',
+  'state.loadFailed': 'Не удалось загрузить данные из backend',
   'state.offlineHint': 'Режим предпросмотра — операции с данными отключены, пока не подключён десктоп-бэкенд.',
   'state.offlineBanner': 'Режим предпросмотра — десктоп-бэкенд не подключён. Изменения не сохранятся.',
   'state.permissionDenied': 'Не разрешено',

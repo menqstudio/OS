@@ -216,6 +216,7 @@ export const hy: Record<DictKey, string> = {
   'files.saved': 'Ֆայլը պահված է',
 
   'state.offline': 'Backend-ը հասանելի չէ',
+  'state.loadFailed': 'Չհաջողվեց բեռնել backend-ից',
   'state.offlineHint': 'Preview ռեժիմ — տվյալների գործողություններն անջատված են, մինչև desktop backend-ը միանա։',
   'state.offlineBanner': 'Preview ռեժիմ — desktop backend-ը միացած չէ։ Փոփոխությունները չեն պահվի։',
   'state.permissionDenied': 'Թույլատրված չէ',

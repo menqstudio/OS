@@ -734,7 +734,7 @@ const KNOWLEDGE_CSS = `
 .v-knowledge .kb-row { display: flex; gap: 10px; width: 100%; text-align: left; cursor: pointer;
   padding: 10px 12px; background: rgb(var(--raised-rgb)/.4); color: var(--ink);
   border: 1px solid rgb(var(--line-rgb)/.7); border-radius: var(--r);
-  animation: kb-reveal var(--slow) ease both;
+  animation: kb-reveal var(--slow) both;
   transition: background var(--fast), border-color var(--fast), transform var(--fast); }
 .v-knowledge .kb-row:hover { border-color: rgb(var(--cyan-rgb)/.35); transform: translateY(-1px); }
 .v-knowledge .kb-row--sel { border-color: rgb(var(--cyan-rgb)/.55); background: rgb(var(--cyan-rgb)/.08); }
@@ -758,7 +758,7 @@ const KNOWLEDGE_CSS = `
 .v-knowledge .kb-core-id b { font-family: var(--f-display); font-size: 16px; }
 
 .v-knowledge .kb-article { display: flex; flex-direction: column; gap: var(--s4);
-  animation: kb-reveal var(--slow) ease both; }
+  animation: kb-reveal var(--slow) both; }
 .v-knowledge .kb-article h2 { font-size: var(--t-h1); font-weight: 800; letter-spacing: -.01em; margin: 0; }
 .v-knowledge .kb-article h3 { font-size: var(--t-micro); text-transform: uppercase; letter-spacing: .14em;
   color: var(--ink-muted); font-weight: 700; margin: 0; }
@@ -800,11 +800,13 @@ const KNOWLEDGE_CSS = `
   gap: var(--s4); margin-top: var(--s4); }
 .v-knowledge .kstat { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px;
   border: 1px solid rgb(var(--line-rgb)/.7); border-radius: var(--r); background: rgb(var(--raised-rgb)/.4);
-  animation: kb-reveal var(--slow) ease both; animation-delay: calc(var(--i, 3) * 40ms); }
+  animation: kb-reveal var(--slow) both; animation-delay: calc(var(--i, 3) * 40ms); }
 .v-knowledge .kstat b { font-family: var(--f-display); font-size: 26px; }
 .v-knowledge .kstat.ks-info b { color: var(--cyan-soft); }
 .v-knowledge .kstat.ks-mint b { color: var(--mint); }
 
+/* "kb-reveal var(--slow) both" above was "… var(--slow) ease both": --slow already carries an
+   easing, so the item had two and the browser dropped the declaration. It never ran. */
 @keyframes kb-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 980px) {

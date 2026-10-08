@@ -540,7 +540,7 @@ const LIBRARY_CSS = `
 .v-library .lib-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
   gap: 8px; max-height: 58vh; overflow-y: auto; }
 .v-library .lib-row { display: grid; grid-template-columns: 1fr auto; align-items: stretch; gap: 6px;
-  animation: lib-reveal var(--slow) var(--enter) both; animation-delay: calc(var(--i, 0) * 32ms); }
+  animation: lib-reveal var(--slow) both; animation-delay: calc(var(--i, 0) * 32ms); }
 
 .v-library .lib-item { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left;
   cursor: pointer; font: inherit; color: var(--ink); background: rgb(var(--raised-rgb)/.55);
@@ -580,6 +580,9 @@ const LIBRARY_CSS = `
   font-size: var(--t-small); line-height: 1.55; white-space: pre-wrap; margin: 0; color: var(--ink); }
 .v-library .lib-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--s4); }
 
+/* "lib-reveal var(--slow) both" above was "… var(--slow) var(--enter) both": both tokens are a
+   duration WITH an easing, so the item had two easings and never ran. --slow is kept: it is the
+   one in the duration position, and the one the Knowledge twin of this reveal uses. */
 @keyframes lib-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .v-library .lib-row { animation: none; }

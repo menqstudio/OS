@@ -364,7 +364,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="inline-alert inline-alert--danger ctx-window-error" role="alert">
           <b>{t('action.windowFailed')}</b>
           <span>{windowError}</span>
-          <button type="button" onClick={() => setWindowError(null)} aria-label="Dismiss">✕</button>
+          <button type="button" onClick={() => setWindowError(null)} aria-label={t('action.close')}>✕</button>
         </div>
       )}
     </>

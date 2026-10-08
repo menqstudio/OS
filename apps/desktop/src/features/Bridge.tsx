@@ -213,7 +213,7 @@ export function BridgePanel({ taskId }: { taskId?: string } = {}) {
   };
 
   return (
-    <section className="v-bridge" aria-label={STR.panelTitle.en}>
+    <section className="v-bridge" aria-label={L('panelTitle')}>
       <style>{styles}</style>
       <div className="surface soft br-panel">
         <header className="br-row-head">

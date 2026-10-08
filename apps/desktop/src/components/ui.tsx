@@ -102,7 +102,7 @@ export function ErrorState({ message, onRetry, retryLabel }: { message: string; 
   return (
     <div className="empty">
       <div className="empty-glyph" style={{ color: 'var(--menq-color-danger)' }}>⚠</div>
-      <div className="empty-title">Couldn’t load from the backend</div>
+      <div className="empty-title">{t('state.loadFailed')}</div>
       <div className="muted" style={{ marginTop: 4, maxWidth: 460, marginInline: 'auto' }}>{message}</div>
       {onRetry && <div style={{ marginTop: 12 }}><Button small onClick={onRetry}>{retryLabel ?? t('action.retry')}</Button></div>}
     </div>

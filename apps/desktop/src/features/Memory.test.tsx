@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 // Mock the Tauri IPC boundary. Memory mirrors the real list_memory store; it renders only
 // what the store returns and never fabricates an entry.
@@ -36,5 +36,29 @@ describe('Memory — mirrors the real list_memory store', () => {
     setup();
     await waitFor(() => expect(screen.getAllByText('Rotate the API key monthly').length).toBeGreaterThan(0));
     expect(called('list_memory')).toBe(true);
+  });
+});
+
+// The page shortcuts read `e.key` and nothing else, so Ctrl+N, Alt+E and Cmd+N were taken and
+// `preventDefault`ed: the browser's or the OS's own chord was swallowed and a dialog opened.
+describe('Memory — the page shortcuts leave modified chords alone', () => {
+  it.each([
+    ['Ctrl+N', { key: 'n', ctrlKey: true }],
+    ['Cmd+N', { key: 'n', metaKey: true }],
+    ['Alt+N', { key: 'n', altKey: true }],
+    ['Ctrl+/', { key: '/', ctrlKey: true }],
+  ])('%s is not captured', async (_name, init) => {
+    setup();
+    await waitFor(() => expect(screen.getAllByText('Rotate the API key monthly').length).toBeGreaterThan(0));
+    // `fireEvent` returns false when a handler called preventDefault.
+    expect(fireEvent.keyDown(window, init)).toBe(true);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('the bare key still works', async () => {
+    setup();
+    await waitFor(() => expect(screen.getAllByText('Rotate the API key monthly').length).toBeGreaterThan(0));
+    expect(fireEvent.keyDown(window, { key: 'n' })).toBe(false);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 });

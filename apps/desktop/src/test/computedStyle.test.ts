@@ -69,8 +69,13 @@ describe('belowNeed — the verdict is on the raw ratio, and no number is not a 
 // because an invalid declaration is not an error anywhere; this reads the stylesheets and counts.
 describe('no transition or animation item carries two easing functions', () => {
   const SRC = resolve(__dirname, '..');
+  // `.css` files AND the components: most pages here carry their stylesheet in a template literal
+  // inside the `.tsx`. The first version of this test read `.css` only and so walked past
+  // `animation: kb-reveal var(--slow) ease both` in Knowledge.tsx, three times.
+  const styled = (name: string) => name.endsWith('.css')
+    || (/\.(tsx|ts)$/.test(name) && !/\.(test|spec)\.(tsx|ts)$/.test(name));
   const cssFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? cssFiles(join(dir, e.name)) : e.name.endsWith('.css') ? [join(dir, e.name)] : []);
+    e.isDirectory() ? cssFiles(join(dir, e.name)) : styled(e.name) ? [join(dir, e.name)] : []);
   const files = cssFiles(SRC);
   const sheets = files.map((f) => ({ f, css: readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '') }));
 
@@ -94,11 +99,12 @@ describe('no transition or animation item carries two easing functions', () => {
 
   it('finds the stylesheets and the motion tokens it needs', () => {
     expect(files.length).toBeGreaterThan(3);
+    expect(files.some((f) => f.endsWith('Knowledge.tsx'))).toBe(true);
     expect(tokens.get('--slow')).toMatch(/cubic-bezier/);
     expect(tokens.get('--spring')).toMatch(/cubic-bezier/);
   });
 
-  it('holds across every stylesheet under src/', () => {
+  it('holds across every stylesheet under src/, in a .css file or inside a component', () => {
     const doubled: string[] = [];
     for (const { f, css } of sheets) {
       for (const m of css.matchAll(/(?:^|[;{\s])(transition|animation)\s*:\s*([^;}]+)/g)) {

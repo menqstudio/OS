@@ -432,6 +432,9 @@ export function Memory() {
       const el = document.activeElement;
       const typing = el instanceof HTMLElement &&
         (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+      // A modified chord is somebody else's: Ctrl+N, Alt+E and Cmd+N were taken here and
+      // `preventDefault`ed, because only `e.key` was read.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.key === '/' && !typing) {
         e.preventDefault();
         searchRef.current?.focus();
