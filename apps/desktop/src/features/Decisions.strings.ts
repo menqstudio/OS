@@ -34,9 +34,9 @@ export const STR = {
     ru: 'Цепочка доказательств движка отзеркалена.',
   },
   chainSealedAnnounce: {
-    en: 'Evidence chain is sealed — the engine chain is not exposed to the desktop.',
-    hy: 'Ապացույցների շղթան կնքված է — շարժիչի շղթան հասանելի չէ desktop-ին։',
-    ru: 'Цепочка доказательств запечатана — цепочка движка недоступна для десктопа.',
+    en: 'The engine evidence chain could not be read.',
+    hy: 'Շարժիչի ապացույցների շղթան չհաջողվեց կարդալ։',
+    ru: 'Цепочку доказательств движка не удалось прочитать.',
   },
   // Prefix before the decision title: `${selectedPrefix}${title}`
   selectedPrefix: { en: 'Selected: ', hy: 'Ընտրված է՝ ', ru: 'Выбрано: ' },
@@ -144,10 +144,12 @@ export const STR = {
     ru: 'Цепочка доказательств недоступна',
   },
   evidenceSealed: { en: 'Evidence sealed', hy: 'Ապացույցները կնքված են', ru: 'Доказательства запечатаны' },
+  // This said the chain "is not exposed to the desktop yet", on the page that had just called the
+  // read. What is known here is that the read returned no chain; why is the reason line below.
   sealedBody: {
-    en: 'The engine evidence chain is read-only and is not exposed to the desktop yet. The local decision table holds the decision row; it never holds or fabricates the sealed evidence.',
-    hy: 'Շարժիչի ապացույցների շղթան կարդալու է և դեռ հասանելի չէ desktop-ին։ Տեղային որոշումների աղյուսակը պահում է որոշման տողը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
-    ru: 'Цепочка доказательств движка доступна только для чтения и пока не открыта для десктопа. Локальная таблица решений хранит строку решения; она никогда не хранит и не фабрикует запечатанные доказательства.',
+    en: 'The engine evidence chain could not be read: the read was refused, or the engine was not reached. The reason, when one came back, is below. The local decision table holds the decision row; it never holds or fabricates the sealed evidence.',
+    hy: 'Շարժիչի ապացույցների շղթան չհաջողվեց կարդալ. ընթերցումը մերժվեց, կամ շարժիչին հասնել չհաջողվեց։ Պատճառը, եթե վերադարձվել է, ներքևում է։ Տեղային որոշումների աղյուսակը պահում է որոշման տողը, բայց երբեք չի պահում կամ կեղծում կնքված ապացույցը։',
+    ru: 'Цепочку доказательств движка не удалось прочитать: чтение было отклонено либо движок не был достигнут. Причина, если она получена, указана ниже. Локальная таблица решений хранит строку решения; она никогда не хранит и не фабрикует запечатанные доказательства.',
   },
   // Prefix before the engine-supplied reason: `${reasonPrefix}${reason}`
   reasonPrefix: { en: 'Reason: ', hy: 'Պատճառ՝ ', ru: 'Причина: ' },
