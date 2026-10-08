@@ -39,7 +39,9 @@
       "aios-success-tint": "#ecf4f1",
       "aios-warning-tint": "#f5f2eb",
       "aios-mint-tint": "#ebf4f3",
-      "aios-danger-tint": "#f9eced"
+      "aios-danger-tint": "#f9eced",
+      "aios-azure-soft": "#0064cb",
+      "aios-azure-tint": "#dde9f9"
     },
     "dark": {
       "bg": "#0c0e13",
@@ -75,7 +77,9 @@
       "aios-success-tint": "#0f1f23",
       "aios-warning-tint": "#1d1c1c",
       "aios-mint-tint": "#0e1f26",
-      "aios-danger-tint": "#201620"
+      "aios-danger-tint": "#201620",
+      "aios-azure-soft": "#7cc4ff",
+      "aios-azure-tint": "#0b1b2f"
     }
   },
   "pairs": [
@@ -372,6 +376,27 @@
       "bg": "aios-danger-tint",
       "size": "normal",
       "why": "`.pill.{live,warn,info,mint,bad}` paint the colour as text on a tint of ITSELF (8%, 9% for `bad`) — the same shape as the `--menq-*` badge tints, in the palette no static gate was measuring. The tint is a COMPOSITE: recompute it whenever the colour changes, the rule `selected` already carries."
+    },
+    {
+      "id": "aios-azure-soft-on-surface",
+      "fg": "aios-azure-soft",
+      "bg": "aios-surface",
+      "size": "normal",
+      "why": "`--azure-soft` is painted as TEXT — `.tag` (Security, Settings, Memory), the approval tier chips `.tier-A3` on a 10% azure tint, `.ar-trig` on the automations page — and it was in no pair. The 2026-08-29 retune of this palette listed six colours and not this one. Light `#4DA5FF` computed 2.58 on the surface, 2.40 on the page background and 2.10 on its own tint. The tint is a COMPOSITE (10% of `--azure` over `--bg`, the lightest-on-light case); recompute it if either moves."
+    },
+    {
+      "id": "aios-azure-soft-on-bg",
+      "fg": "aios-azure-soft",
+      "bg": "aios-bg",
+      "size": "normal",
+      "why": "`--azure-soft` is painted as TEXT — `.tag` (Security, Settings, Memory), the approval tier chips `.tier-A3` on a 10% azure tint, `.ar-trig` on the automations page — and it was in no pair. The 2026-08-29 retune of this palette listed six colours and not this one. Light `#4DA5FF` computed 2.58 on the surface, 2.40 on the page background and 2.10 on its own tint. The tint is a COMPOSITE (10% of `--azure` over `--bg`, the lightest-on-light case); recompute it if either moves."
+    },
+    {
+      "id": "aios-azure-soft-on-azure-tint",
+      "fg": "aios-azure-soft",
+      "bg": "aios-azure-tint",
+      "size": "normal",
+      "why": "`--azure-soft` is painted as TEXT — `.tag` (Security, Settings, Memory), the approval tier chips `.tier-A3` on a 10% azure tint, `.ar-trig` on the automations page — and it was in no pair. The 2026-08-29 retune of this palette listed six colours and not this one. Light `#4DA5FF` computed 2.58 on the surface, 2.40 on the page background and 2.10 on its own tint. The tint is a COMPOSITE (10% of `--azure` over `--bg`, the lightest-on-light case); recompute it if either moves."
     }
   ]
 }
