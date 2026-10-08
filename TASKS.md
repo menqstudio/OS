@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `e9358e7`.** PR #340 on `t168/tools-use-the-repo-owners-account` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #341 · branch `front-page-v1`** (base `main`, tip `99c8c3c`, task unstated).
 >
-> **Next:** Owner: main has no branch protection while private (T-168).
+> Repository front page standard v1 (MenQ-Standard CR-0011): cover, start-here links and a four-line summary at the top of the README; the rest of the README is untouched.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
