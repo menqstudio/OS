@@ -5,9 +5,9 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `e9ef07e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `a1c0c28`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `e9ef07e`.** PR #371 on `cockpit/bugs-2` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `a1c0c28`.** PR #372 on `cockpit/bugs-3` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
