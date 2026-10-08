@@ -1238,7 +1238,7 @@ const CSS = `
 .au-contract .au-ev li.is-held{color:var(--ink)}
 .au-preview{margin:12px 0 4px;border-top:1px solid rgb(var(--line-rgb)/.9);padding-top:10px}
 .au-preview>.micro{display:block;margin-bottom:8px;color:var(--ink-muted)}
-.au-warn{color:var(--warn,var(--danger))}
+.au-warn{color:var(--warning)}
 
 .v-automations .astat.au-danger b{color:var(--danger)}
 

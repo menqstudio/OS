@@ -508,7 +508,7 @@ const CSS = `
 .nsig-band {
   position: relative; display: flex; align-items: stretch; gap: 0;
   min-width: 118px; padding: 0; cursor: pointer; text-align: left;
-  border: 1px solid var(--brops-border); border-radius: var(--r-md, 12px);
+  border: 1px solid var(--brops-border); border-radius: var(--r);
   background: var(--brops-surface); overflow: hidden;
   transition: border-color var(--fast, .18s), transform var(--fast, .18s), background var(--fast, .18s);
 }
@@ -530,7 +530,7 @@ const CSS = `
 .nsig-srow {
   position: relative; display: flex; gap: var(--s3, 10px);
   padding: 11px 14px 11px 16px; cursor: default;
-  border: 1px solid var(--brops-border); border-radius: var(--r-md, 12px);
+  border: 1px solid var(--brops-border); border-radius: var(--r);
   background: var(--brops-surface);
   transition: border-color var(--fast, .18s), background var(--fast, .18s), transform var(--fast, .18s);
 }

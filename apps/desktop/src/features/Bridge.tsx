@@ -32,11 +32,11 @@ import { STR } from './Bridge.strings';
 
 const styles = `
 .v-bridge { margin-top: 26px; }
-.v-bridge .br-panel { padding: var(--s5, 18px); border-radius: var(--r-md, 12px); }
+.v-bridge .br-panel { padding: var(--s5, 18px); border-radius: var(--r); }
 .v-bridge .br-intro { color: var(--ink-muted); max-width: 72ch; }
 .v-bridge .br-sec { margin-top: var(--s5, 18px); }
 .v-bridge .br-sec > h3 { font-size: var(--t-small, 13px); letter-spacing: .1em; text-transform: uppercase; color: var(--cyan-soft); margin: 0 0 10px; }
-.v-bridge .br-row { padding: 12px 0; border-top: 1px solid var(--hairline, rgba(127,127,127,.24)); }
+.v-bridge .br-row { padding: 12px 0; border-top: 1px solid var(--line); }
 .v-bridge .br-row:first-of-type { border-top: none; }
 .v-bridge .br-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .v-bridge .br-row-name { font-weight: 600; }
@@ -44,7 +44,7 @@ const styles = `
 .v-bridge .br-why { word-break: break-word; }
 .v-bridge .br-turn-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 12px 0; }
 .v-bridge .br-body { margin: 6px 0 0; max-width: 72ch; }
-.v-bridge .br-msg { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm, 8px); background: var(--surface-2, rgba(127,127,127,.08)); white-space: pre-wrap; }
+.v-bridge .br-msg { margin-top: 10px; padding: 10px 12px; border-radius: var(--r-sm, 8px); background: var(--raised); white-space: pre-wrap; }
 `;
 
 /** Every non-decision maps to exactly one plain-language gloss. A `Record` (not a lookup by string

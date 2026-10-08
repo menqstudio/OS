@@ -482,7 +482,7 @@
   margin: var(--menq-space-3, 12px) 0;
   padding: 10px 12px;
   border-radius: 8px;
-  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  background: var(--raised);
   border: 1px solid var(--menq-color-danger, rgba(220, 80, 80, 0.5));
   white-space: pre-wrap;
   word-break: break-word;

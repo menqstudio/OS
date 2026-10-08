@@ -28,7 +28,7 @@ import { BridgePanel } from './Bridge';
 // disabled under prefers-reduced-motion, per §D.
 const styles = `
 .v-decisions .ledger:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menq-color-focus); }
-.v-decisions .ledger { border-radius: var(--r-md, 12px); outline: none; max-height: 62vh; overflow-y: auto; padding-right: 2px; }
+.v-decisions .ledger { border-radius: var(--r); outline: none; max-height: 62vh; overflow-y: auto; padding-right: 2px; }
 .v-decisions .led { grid-template-columns: auto 1fr auto; cursor: pointer; animation: dec-reveal var(--menq-motion-med, .3s) ease both; }
 .v-decisions .led.dec-stamp { animation: dec-stamp var(--menq-motion-med, .4s) cubic-bezier(0.2, 1.2, 0.3, 1) both; }
 .v-decisions .ch-verdict { align-items: center; }

@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1144,
+      "value": 1145,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-09",
-        "head": "81f4751",
+        "head": "b995c34",
         "environments": {
+          "Debian 13 (trixie) native @ b995c34 + no var() falls back on an undeclared token": {
+            "ran": 1145,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 81f4751 + four metrics named for what they count": {
             "ran": 1144,
             "skipped": 0
@@ -413,7 +417,8 @@
         1093,
         1106,
         1118,
-        1135
+        1135,
+        1144
       ]
     },
     "a11y_tests": {
