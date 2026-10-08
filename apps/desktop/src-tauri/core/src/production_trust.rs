@@ -552,6 +552,44 @@ mod tests {
         assert!(matches!(ts, TrustState::NoTrustedManifest(_)));
     }
 
+    /// What the test below is NAMED for and did not assert. Each of its limbs is
+    /// `!is_production_verified()`, which `DemonstrationCustody` also satisfies — and that state is
+    /// chain-bound and COMMITTABLE. Mapping `ManifestError::Revoked` to `DemonstrationCustody` left
+    /// the whole workspace green, measured 2026-10-08: a revoked key's turn would have been stored as
+    /// a demonstration run. So every resolution failure is held to the exact state, under an anchor
+    /// that supports a production claim AND under one that does not, since the second is the
+    /// provenance a shipped install actually has.
+    #[test]
+    fn nm_man_14_a_resolution_failure_is_no_trusted_manifest_and_is_not_committable() {
+        let vk = verifying_key();
+        for provenance in [RootProvenance::External, RootProvenance::InstallMinted, RootProvenance::KitGenerated] {
+            let refused = |m: &KeyManifest, key_id: &str, protocol: &str, now_ms: i64, what: &str| {
+                let t = token(m, provenance);
+                let ts = resolve_trust_state(Some(m), Some(&t), key_id, protocol, now_ms, &vk);
+                assert!(matches!(ts, TrustState::NoTrustedManifest(_)), "{what} under {provenance:?}: got {ts:?}");
+                assert!(!ts.is_chain_bound(), "{what} under {provenance:?} is chain-bound");
+                assert!(!ts.is_production_verified(), "{what} under {provenance:?}");
+                assert_eq!(ts.committed_label(), None, "{what} under {provenance:?} may be committed");
+            };
+            let m = manifest();
+            refused(&m, "unknown", PROTO, 5000, "a key id the manifest does not hold");
+            refused(&m, "signer-prod", PROTO, 500, "a key outside its validity window");
+            refused(&m, "signer-prod", "other", 5000, "a protocol the key is not allowed for");
+            let mut dev = manifest();
+            dev.keys[0].trust_class = TrustClass::Development;
+            refused(&dev, "signer-prod", PROTO, 5000, "a development-class key");
+            let mut rev = manifest();
+            rev.keys[0].revoked = true;
+            refused(&rev, "signer-prod", PROTO, 5000, "a revoked key");
+
+            // The control: the unaltered manifest IS chain-bound under every one of these anchors, so
+            // the refusals above are about the defect and not about the fixture.
+            let t = token(&m, provenance);
+            assert!(resolve_trust_state(Some(&m), Some(&t), "signer-prod", PROTO, 5000, &vk).is_chain_bound(),
+                "control under {provenance:?}");
+        }
+    }
+
     #[test]
     fn nm_man_14_every_resolution_failure_fails_closed_to_no_trusted_manifest() {
         // NM-MAN-14 — a development-class signing key (the `dev` limb below) never renders production Verified, even under a genuine External-anchored token.

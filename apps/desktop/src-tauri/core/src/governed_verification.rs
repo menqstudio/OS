@@ -1557,6 +1557,70 @@ mod tests {
         assert!(matches!(verify_and_accept(&expected(&f), &env, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()), Err(TurnReason::UpstreamBlocked)));
     }
 
+    // ---- Three step-1 / step-4 checks that every test above leaves undefended ----
+    //
+    // Deleting any one of `envelope.artifact_type != …`, `envelope.key_id != keys.isolated_signer_key_id`
+    // or `envelope.request_sha256 != expected.request_sha256()` left this module at 35 passed, measured
+    // on 2026-10-08. The tests that name two of them alter a SIGNED field and reuse the old signature,
+    // or alter the broker's Expected, so a different check refuses first and every refusal here is the
+    // same `UpstreamBlocked`. Each case below changes ONE envelope field and RE-SIGNS, the way
+    // `nm_man_06` does, so the signature is genuine and only the check under test is left to refuse.
+
+    /// A re-signed envelope differing from the genuine one in a single field, refused and costing
+    /// the turn nothing: the genuine envelope is then accepted through the SAME ledger.
+    fn assert_only_this_field_refuses(f: &Fx, env: &ReceiptEnvelope<'_>, what: &str) {
+        let env_sig = sign_b64(&signing_key(7), &env.payload_jcs().unwrap());
+        let k = keys(f);
+        let a = attest(f);
+        let mut ledger = InMemoryLedger::new();
+        assert!(
+            verify_ed25519(k.isolated_signer_public_key, &env.payload_jcs().unwrap(), &env_sig).is_ok(),
+            "{what}: the re-signature must be REAL, or this refuses for the wrong reason"
+        );
+        match verify_and_accept(&expected(f), env, &env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()) {
+            Err(TurnReason::UpstreamBlocked) => {}
+            Err(other) => panic!("{what}: expected UpstreamBlocked, got {other:?}"),
+            Ok(_) => panic!("{what}: a genuinely signed envelope with this defect was ACCEPTED"),
+        }
+        let good = envelope(f);
+        assert!(
+            verify_and_accept(&expected(f), &good, &f.env_sig, &a, &k, OUTPUT, &CTX, &mut ledger, &fresh()).is_ok(),
+            "{what}: the control — the genuine envelope through the same ledger — must be accepted"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_signed_envelope_of_another_artifact_type_is_refused() {
+        let f = fx();
+        let mut env = envelope(&f);
+        env.artifact_type = "brops.some-other.v1";
+        assert_only_this_field_refuses(&f, &env, "artifact_type");
+    }
+
+    #[test]
+    fn a_genuinely_signed_envelope_naming_another_signer_key_id_is_refused() {
+        // The KEY is the pinned one — it signed this — and the ID is not. A broker that trusted the
+        // signature alone would accept a receipt that says it came from a key it never pinned.
+        let f = fx();
+        let mut env = envelope(&f);
+        env.key_id = "iso-signer-2";
+        assert_ne!(env.key_id, keys(&f).isolated_signer_key_id);
+        assert_only_this_field_refuses(&f, &env, "key_id");
+    }
+
+    #[test]
+    fn a_genuinely_signed_envelope_carrying_another_request_sha256_is_refused() {
+        // Every component the broker recomputes from is unchanged; only the digest the signer wrote
+        // is wrong. `request_sha256_mismatch_blocks` moves the broker's Expected instead, and the
+        // evidence comparison in step 4c refuses that on its own.
+        let f = fx();
+        let wrong = hx(0x5a);
+        assert_ne!(wrong, f.request_sha256);
+        let mut env = envelope(&f);
+        env.request_sha256 = &wrong;
+        assert_only_this_field_refuses(&f, &env, "request_sha256");
+    }
+
     #[test]
     fn a_mismatched_request_nonce_blocks() {
         let f = fx();

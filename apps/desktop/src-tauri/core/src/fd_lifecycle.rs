@@ -314,6 +314,26 @@ mod tests {
         assert_eq!(verify_launcher_fd_set(&s2, ADMIN), Err(FdViolation::BadStoreInput(5)));
     }
 
+    /// The third conjunct of the store-input rule. The test above flips `read_only` and
+    /// `offset_zero` and never this one, so `is_regular_store_inode` could be dropped from the
+    /// condition with the whole workspace green — measured 2026-10-08. A read-only descriptor at
+    /// offset zero that is NOT a regular store inode (a pipe, a device, a directory) is exactly
+    /// what the flag exists to refuse, on each of the three store inputs.
+    #[test]
+    fn rejects_a_store_input_that_is_not_a_regular_store_inode() {
+        for fd in [3usize, 4, 5] {
+            let mut s = good();
+            assert!(s[fd].is_regular_store_inode, "fd {fd}: the fixture must start as a store inode");
+            s[fd].is_regular_store_inode = false;
+            assert_eq!(
+                verify_launcher_fd_set(&s, ADMIN),
+                Err(FdViolation::BadStoreInput(fd as i32)),
+                "fd {fd}"
+            );
+        }
+        assert!(verify_launcher_fd_set(&good(), ADMIN).is_ok(), "the control: the unaltered set passes");
+    }
+
     #[test]
     fn rejects_a_bad_output_pipe() {
         let mut s = good();
