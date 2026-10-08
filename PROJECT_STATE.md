@@ -75,8 +75,8 @@ All 35 contexts in `config/required-checks.json` are required on `main`, with `s
 `enforce_admins`; `check_repo_state.py` is GREEN. Private from 2026-10-05 it had none (`T-168`):
 on this plan a private repository carries no protection, and going private deletes the rules.
 
-**The `.deb` was installed on this box on 2026-10-09** and first launch runs: the installer
-minted the anchor. The window is refused the governed turn and the mirrors (OWNER 2h).
+**The `.deb` was installed here on 2026-10-09** and first launch runs. The mirrors are
+granted since; the governed turn is still refused (OWNER 2h).
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.

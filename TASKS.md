@@ -41,7 +41,7 @@ Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: commissioning the next independent audit (122 PRs unaudited; the `.deb` was installed here 2026-10-09 and OWNER 2h was seen on screen), what the drafted 0.1.0 release becomes, requiring the Windows
+Waiting on the Owner, not rows: commissioning the next independent audit (122 PRs unaudited; the `.deb` was installed here 2026-10-09 and OWNER 2h was seen on screen, then five of its six commands granted), what the drafted 0.1.0 release becomes, requiring the Windows
 tools job (file and live protection together), `T-063`'s tag arm, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
 (§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 

@@ -104,28 +104,24 @@ _TEST_MODULE = "\n#[cfg(test)]\nmod tests {"
 # permission entry". That is Tauri's behaviour for an app with no manifest at all; this app
 # has one, and with one the opposite holds. tauri 2.11.5 (the version Cargo.lock pins),
 # `src/webview/mod.rs`: a command is REJECTED when `has_app_acl_manifest && invoke.acl
-# .is_none()`, and a command absent from the manifest resolves no ACL. So these six are not
-# ungated — the window is refused them, and their callers in `src/services/desktop.ts`
-# cannot reach them. Established by reading that source, NOT by running the app.
+# .is_none()`, and a command absent from the manifest resolves no ACL. So what is listed here is not
+# ungated — the window is refused it, and its caller in `src/services/desktop.ts`
+# cannot reach it. Established by reading that source, and then OBSERVED in the installed
+# application on 2026-10-09 (`Command governed_turn_execute not allowed by ACL`).
 # The set is kept, and kept under its old name because `build.rs` and
 # `docs/REACHABILITY_GATE.md` cite it; what it now records is "registered, and deliberately
-# not grantable to the window". Whether to grant them (a manifest entry plus an `allow-*`)
-# or remove their callers is the Owner's decision: it changes what the window may invoke.
+# not grantable to the window". Whether to grant one (a manifest entry plus an `allow-*`)
+# or remove its caller is the Owner's decision: it changes what the window may invoke.
 #   - governed_turn_execute: the trusted-broker governed-turn proxy; gated by the broker
 #       lease/challenge system and fails closed ("broker_unavailable") off the supported
 #       path. Whether it should additionally sit under the window policy is an owner gate call.
-#   - read_decision_ledger / read_evidence_chain / read_verifier_verdicts /
-#       read_engine_approval_queue: READ-ONLY Phase-2 governance mirrors — hold no key/lease,
-#       touch no DB, author no decision, and fail closed to Blocked/Unreachable.
-#   - governed_trust_selftest: owner-visible in-process trust-chain self-test; never flips a
-#       live AI turn.
+# 2026-10-09: FIVE of the six left this set. The first real install (a locally built .deb on the
+# Debian development box) showed the refusal on screen -- `Command read_decision_ledger not
+# allowed by ACL` -- and the Owner granted the four governance reads and the trust self-test.
+# They are declared under the wall now, tier R. What stays here is the one command a governed
+# result travels through, until an independent audit has it in scope.
 INTENTIONALLY_UNGATED = {
     "governed_turn_execute",
-    "read_decision_ledger",
-    "read_evidence_chain",
-    "read_verifier_verdicts",
-    "read_engine_approval_queue",
-    "governed_trust_selftest",
 }
 
 

@@ -10,9 +10,9 @@ fn main() {
     //
     // INVARIANT (enforced by tools/check_capabilities.py in CI): this list must be
     // exactly the set of commands registered in `src/lib.rs` generate_handler! MINUS the
-    // handful named in that checker's INTENTIONALLY_UNGATED allowlist (the governed-turn /
-    // governance-mirror / trust-selftest commands deliberately kept outside the window
-    // capability policy), and exactly the set classified in `command-policy.json`. Adding a
+    // one named in that checker's INTENTIONALLY_UNGATED allowlist (`governed_turn_execute`,
+    // deliberately kept outside the window capability policy until an independent audit has it
+    // in scope), and exactly the set classified in `command-policy.json`. Adding a
     // command in one place without the others — or a NEW module-scoped command not added to
     // the allowlist — fails CI, so nothing is ever silently ungated.
     const COMMANDS: &[&str] = &[
@@ -39,6 +39,14 @@ fn main() {
         "reject_approval",
         "escalate_approval",
         "request_engine_approval",
+        // governance mirrors (read-only) + the trust self-test. Granted to the window by the
+        // Owner on 2026-10-09, after the first real install showed the cockpit refused its own
+        // reads. They hold no key and no lease, write nothing and fail closed.
+        "read_decision_ledger",
+        "read_evidence_chain",
+        "read_verifier_verdicts",
+        "read_engine_approval_queue",
+        "governed_trust_selftest",
         "confirm_approval",
         // notifications
         "list_notifications",

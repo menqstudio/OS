@@ -252,6 +252,26 @@
       "tier": "A",
       "grant": "allow"
     },
+    "read_decision_ledger": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "read_evidence_chain": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "read_verifier_verdicts": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "read_engine_approval_queue": {
+      "tier": "R",
+      "grant": "allow"
+    },
+    "governed_trust_selftest": {
+      "tier": "R",
+      "grant": "allow"
+    },
     "remove_task_dependency": {
       "tier": "L1",
       "grant": "allow"

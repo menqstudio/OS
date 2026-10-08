@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-engine-approval-queue"
+description = "Enables the read_engine_approval_queue command without any pre-configured scope."
+commands.allow = ["read_engine_approval_queue"]
+
+[[permission]]
+identifier = "deny-read-engine-approval-queue"
+description = "Denies the read_engine_approval_queue command without any pre-configured scope."
+commands.deny = ["read_engine_approval_queue"]

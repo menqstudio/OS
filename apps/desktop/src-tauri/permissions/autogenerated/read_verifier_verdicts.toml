@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-verifier-verdicts"
+description = "Enables the read_verifier_verdicts command without any pre-configured scope."
+commands.allow = ["read_verifier_verdicts"]
+
+[[permission]]
+identifier = "deny-read-verifier-verdicts"
+description = "Denies the read_verifier_verdicts command without any pre-configured scope."
+commands.deny = ["read_verifier_verdicts"]
