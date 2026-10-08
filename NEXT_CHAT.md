@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `a90ca90`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `7fd07aa`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `a90ca90`.** PR #347 on `canon/audit-scope-11` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `7fd07aa`.** PR #348 on `canon/release-drafted` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: draft the 0.1.0 release.
+> **Next:** Owner: commission the next independent audit.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -79,8 +79,8 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 **93 pull requests, 886 files and 104,780 inserted lines have merged since that head**, and
 none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `a90ca90`, 2026-10-08; this said 31 / 121 / 10,599 for seventeen days.)*
 
-**Two things wait on the Owner** *(the gitleaks false positive is fixed, 2026-10-08)*: an UNSIGNED
-`BroPS 0.1.0` release is published and marked *Latest* — make it a draft — and the Windows tools job,
+**Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:
+commissioning the next independent audit — 93 pull requests are unaudited — and the Windows tools job,
 green six `main` runs running, must be required in the file and in live protection at one moment.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
 protection is in force again (public; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.

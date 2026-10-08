@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `a90ca90`.** PR #347 on `canon/audit-scope-11` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `7fd07aa`.** PR #348 on `canon/release-drafted` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: draft the 0.1.0 release.
+> **Next:** Owner: commission the next independent audit.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -28,21 +28,20 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | **T-058** | **The transport, then §3.3's BUILD half** — the tick dispatches armed bundles, egress decided against the grant's table. **Nothing resolves an `auth_ref` yet** ◑ | Bro | Todo | `#207` |
 | **T-061** | **Checks correct by reading, defended by no test** — all six of `docs/VERIFICATION_QUEUE_1.md` CLOSED, mutation-proven | Bro | Review | `#219` |
 | **T-062** | **The negative matrix's silent state** — **171 / 54 / 17** of 242 bound. Each reproduced, then mutation-proven or recorded blocked with its measurement; of the 17 left, triage finds most need security code or a second UID ◑ | Bro | In-Progress | `#339` |
-| **T-056** | **Two fail-closed checks prevent nothing** — `control-invocation.json` holds each control to what its failure stops; `bro_deploy_preflight.py` has no non-test caller | Bro | Todo | `#208` |
+| **T-056** | **Two fail-closed checks prevent nothing** — both declared (`#208`); neither can be made to block from here: `bro_deploy_preflight.py` gates a deployment and none exists to call it (`T-131`; its one caller is `provision/tests/python_verifier.rs`), and requiring `check_ai_surfaces`' job is a protection change | Bro | Blocked | `#208` |
 | **T-057** | **56 fabricated audit rows say so, and the mark reaches the reader** — `repo::seed` writes `payload_json`, both read mappers carry it ◑ | Bro | Review | `#210` |
 | **T-004** | **Engine deferred items O-1..O-5** (Phase 10) — all OPEN, blocked by deployment wiring and a second principal; O-1 the only HIGH | — | Blocked | — |
 | **T-005** | **Option-2 feasibility (audited): engine as a submodule** + a worktree-check fix. Own PR, Owner approval | — | Todo | — |
 | **T-022** | **The governed automation dispatch** — firing one writes a desktop row that never crosses the wall; its `engine_receipt` is unobserved. `T-021` landed; what blocks it now is the shut production gate | — | Blocked | — |
 | **T-023** · **T-046** | **Two Windows CI jobs, cause never characterised** — trust-provisioning (inherited ACL) and the engine job: green on six `main` runs in a row to 2026-10-08, which counts runs and explains nothing | — | Todo | `#182` |
 | **T-030** | **Route 1 past the no-lease / no-secret whitelist** — `A-09`: routes 2/3 closed, Route 1 open **by design**; register at 19 leaves, not 8 | — | Todo | — |
-| **T-034** | **Two palettes, one contrast gate** — `I-04`: `round(ratio, 2)` let 4.4995 print `4.50`; ◑ fixed on the raw ratio | — | Todo | — |
-| **87 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
+| **88 merged rows** | **Shipped, and none independently confirmed** — every id with its pull request is a row in [`docs/archive/TASKS_ARCHIVE_2026-09.md`](docs/archive/TASKS_ARCHIVE_2026-09.md) ◑ | Bro | Review | merged |
 
 Outside review starts at [`docs/EVIDENCE_INDEX.md`](docs/EVIDENCE_INDEX.md).
 
 ## What is not on this board
 
-Waiting on the Owner, not rows: commissioning the next independent audit (93 PRs unaudited), the published unsigned 0.1.0 release, requiring the Windows
+Waiting on the Owner, not rows: commissioning the next independent audit (93 PRs unaudited), what the drafted 0.1.0 release becomes, requiring the Windows
 tools job (file and live protection together), `T-063`'s tag arm, and — new on 2026-09-20 — the outbound LICENCE terms for this public repository
 (§2f) — [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md).
 
