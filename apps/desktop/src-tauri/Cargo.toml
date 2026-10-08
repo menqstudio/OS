@@ -65,7 +65,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # Claude Code login — no separate API key).
 tokio = { version = "1", features = ["process", "rt", "io-util", "time"] }
 
-# Windows-only: the LIVE governed-turn kit. A REAL challenge→lease→attest→sign→
+# The LIVE governed-turn kit (it was a Windows-only dependency; see the note below). A REAL challenge→lease→attest→sign→
 # verify run with real ed25519 crypto, under the compiled-in DEMONSTRATION anchor.
 # Two commands use it, not one:
 #   * `governed_trust_selftest` (src/governed_selftest.rs) — the owner-visible
@@ -78,8 +78,13 @@ tokio = { version = "1", features = ["process", "rt", "io-util", "time"] }
 # touches live AI turns". The second command is exactly that, at demonstration
 # custody. What stays true: neither can produce production `trusted_verified`, and
 # the ordinary chat/ask/run-step turns stay fail-closed under NoTrustedManifest.
-[target.'cfg(windows)'.dependencies]
-brops-win-live = { path = "win-live" }
+#
+# 2026-10-09: the dependency is unconditional. It was `cfg(windows)`, and that line was the only
+# thing keeping the self-test out of the Linux host: the kit's in-process chain has no Windows
+# code in it and its own test of it passes on Linux. The self-test now runs on every platform.
+# `demonstration_verified_reply` and the self-test's model seam stay Windows-only in source.
+[dependencies.brops-win-live]
+path = "win-live"
 
 [dev-dependencies]
 tempfile = "3"
