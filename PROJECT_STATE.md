@@ -1,19 +1,19 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-08 — 120 pull requests merged (`#219`–`#339`), `main` at
-`e9358e7`: all seven workflows green there. Seven of eleven phases have
+**Last updated · Վերջին թարմացում:** 2026-10-08 — 124 pull requests merged (`#219`–`#343`), `main` at
+`873b3ae`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
 anchor (`T-140`); the install mints accounts and the engine anchor (`T-136`–`T-138`), not yet the
-deployment or the broker root. The negative matrix reads: **166 implemented · 52 blocked · 24
+deployment or the broker root. The negative matrix reads: **169 implemented · 52 blocked · 21
 unreviewed**, from 39/21/182.
 It answers what `NEXT_CHAT.md` does not: **the state of each part of the product**. Its history
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `c545043`.** PR #343 on `settle/protection-restored` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `873b3ae`.** PR #344 on `t062/oracle-parity-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-062: bind the rows a test can bind.
+> **Next:** Owner: 4 rows blocked or bound? (T-062)
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -47,8 +47,8 @@ Each row carries the date it was measured, because they are not measured togethe
 | `tools/` self-tests · 2026-10-05 | 1766 OK |
 | frontend · 2026-10-02 | typecheck clean, 999 / 85 files |
 | **Debian** | |
-| engine (Python), non-root, Debian 13 · 2026-10-03 | 2737 OK, 17 skipped |
-| Rust, 10 crates · 2026-10-03 | 1422 passed, 1 ignored (needs root; CI runs it) |
+| engine (Python), non-root, Debian 13 · 2026-10-08 | 2740 OK, 17 skipped |
+| Rust, 10 crates · 2026-10-08 | 1424 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 

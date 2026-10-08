@@ -153,6 +153,25 @@ PARITY_MS_JCS = (b'{"challenge_accepted_at_ms":1700000000000,'
 PARITY_MS_SHA256 = "b839b7c13fcc32d5483cfbf90409973870e1308160ed83b164f3ca04cfb06c52"
 
 
+# NM-PARITY-07: the 23-field governed envelope. A non-ASCII `task_id` and a 2**53 - 1 timestamp,
+# because an escaped code point or a float round-trip is how two canonicalisers disagree.
+PARITY_ENVELOPE = {
+    "artifact_type": "brops.governed-receipt-envelope.v1",
+    "key_id": "iso-signer-1", "receipt_id": "receipt-abc", "run_id": "run-1",
+    "execution_attempt_id": "att-1",
+    "task_id": "\u0561\u057c\u0561\u057b\u0561\u0564\u0580\u0561\u0576\u0584-\u2708-1",
+    "workspace_id": "ws-1", "install_id": "install-1", "request_nonce": "nonce-xyz",
+    "request_sha256": "1" * 64, "record_handle": "2" * 64, "lease_handle": "3" * 64,
+    "execution_receipt_handle": "4" * 64, "output_sha256": "5" * 64,
+    "evidence_final_event_hash": "6" * 64, "supervisor_attestation_key_id": "sup-att-1",
+    "attestation_evidence_sha256": "7" * 64,
+    "output_bytes": 11, "challenge_accepted_at_ms": 1700000000000,
+    "completed_at_ms": 9007199254740991, "evidence_event_count": 3,
+    "evidence_last_sequence": 12, "evidence_head_sequence": 13,
+}
+PARITY_ENVELOPE_SHA256 = "5408619c0e4a3ccf11fa928ec91b108c6b51c83ab331fd25231b0c806c771e28"
+
+
 class NegativeMatrixParityTests(unittest.TestCase):
     """Cross-language formula parity. Each row's Rust half lives in
     `apps/desktop/src-tauri/core/src/receipt.rs::nm_parity_the_same_fixtures_hash_the_same`
@@ -224,6 +243,43 @@ class NegativeMatrixParityTests(unittest.TestCase):
         self.assertTrue(signer._is_u64_ms(MAX_GOVERNED_MS), case)
         self.assertTrue(signer._is_u64_ms(1 << 53),
                         f"{case}: the Python predicate is wider than MAX_GOVERNED_MS")
+
+    def test_nm_parity_07_the_full_field_receipt_and_the_governed_envelope_are_one_form(self):
+        """NM-PARITY-07 -- the 21-field receipt and the 23-field governed envelope, both sides.
+
+        The receipt half was already pinned on both sides (`RECEIPT_ENV_SHA` here and in
+        `receipt.rs`); the governed envelope was not: `isolated_signer._jcs_bytes` and
+        `governed_verification.rs::ReceiptEnvelope::payload_jcs` each said in a comment that the
+        other produces the same bytes, and nothing compared them. The literals below are fed to
+        the signer's canonicaliser here and to `payload_jcs` in the Rust test
+        `nm_parity_07_the_governed_envelope_jcs_is_the_engines_byte_for_byte`, and this test reads
+        that file for the digest and for the literals a comparison would silently lose.
+        """
+        case = "NM-PARITY-07"
+        self.assertEqual(set(PARITY_ENVELOPE), set(signer.ENVELOPE_PAYLOAD_FIELDS), case)
+        self.assertEqual(len(signer.ENVELOPE_PAYLOAD_FIELDS), 23, case)
+        # Every value distinct: with two fields equal, serialising one FROM the other is invisible
+        # (the first version of this fixture had two sequences at 12 and that mutant survived).
+        self.assertEqual(len(set(PARITY_ENVELOPE.values())), 23, case)
+        self.assertEqual(PARITY_ENVELOPE["artifact_type"], signer.ENVELOPE_ARTIFACT_TYPE, case)
+        jcs = signer._jcs_bytes(PARITY_ENVELOPE)
+        self.assertEqual(len(jcs), 1104, case)
+        self.assertEqual(hashlib.sha256(jcs).hexdigest(), PARITY_ENVELOPE_SHA256, case)
+        self.assertIn('"task_id":"\u0561\u057c\u0561\u057b\u0561\u0564\u0580\u0561\u0576\u0584-\u2708-1"'.encode("utf-8"),
+                      jcs, f"{case}: raw UTF-8, never \\u-escaped")
+        self.assertIn(b'"completed_at_ms":9007199254740991,', jcs, f"{case}: a bare integer")
+
+        core = ROOT.parent / "apps" / "desktop" / "src-tauri" / "core" / "src"
+        rust = (core / "governed_verification.rs").read_text(encoding="utf-8")
+        start = rust.index("fn nm_parity_07_the_governed_envelope_jcs_is_the_engines_byte_for_byte")
+        body = rust[start:rust.index("\n    }\n", start)]
+        self.assertIn(f'"{PARITY_ENVELOPE_SHA256}"', rust, f"{case}: the Rust side pins another digest")
+        self.assertIn("NM_PARITY_07_GOVERNED_ENVELOPE_SHA256", body, case)
+        self.assertIn("env.payload_jcs()", body, f"{case}: the Rust test must hash the broker's own form")
+        for literal in (PARITY_ENVELOPE["task_id"], "9_007_199_254_740_991", "1_700_000_000_000"):
+            self.assertIn(literal, body, f"{case}: the Rust fixture lost {literal!r}")
+        # The receipt half: one digest, named in both files.
+        self.assertIn(f'"{RECEIPT_ENV_SHA}"', (core / "receipt.rs").read_text(encoding="utf-8"), case)
 
 class GovernedRefusalReasonParityTests(unittest.TestCase):
     """The desktop's closed refusal union is the engine's, member for member, in order.
