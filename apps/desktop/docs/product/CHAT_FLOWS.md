@@ -57,7 +57,7 @@ Completion is reported only when execution evidence and verification both exist.
 
 1. Gev hovers or long-presses any message and opens the message actions menu.
 2. Options: **Create task**, **Create decision**, **Request approval**, **Save to knowledge**, **Pin**.
-3. **Create task** opens a prefilled task drawer (title from the message, owner, status `planned`, evidence link back to the source message). On save, a task chip is attached under the message and the task appears in the right pane and in Tasks.
+3. **Create task** opens a prefilled task drawer (title from the message, owner, status `inbox` — what the store creates a task as, evidence link back to the source message). On save, a task chip is attached under the message and the task appears in the right pane and in Tasks.
 4. **Create decision** opens a decision drawer in state `proposed` with context copied from the thread; it moves through `proposed → under review → approved | rejected | deferred`.
 5. **Request approval** creates an approval object bound to the exact action, target, scope, consequences, and expiry, and routes it to the Approvals queue.
 6. Every created object keeps a back-link to the originating message, so the chat remains the provenance trail.
