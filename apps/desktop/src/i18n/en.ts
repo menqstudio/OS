@@ -214,6 +214,7 @@ export const en = {
   'files.saved': 'File saved',
 
   'state.offline': 'Backend unavailable',
+  'state.loadFailed': 'Couldn’t load from the backend',
   'state.offlineHint': 'Running in preview mode — data actions are disabled until the desktop backend is connected.',
   'state.offlineBanner': 'Preview mode — desktop backend not connected. Changes will not be saved.',
   'state.permissionDenied': 'Not permitted',

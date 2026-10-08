@@ -106,3 +106,34 @@ describe('T-038 — no test inherits another test\'s browser storage', () => {
     expect(sessionStorage.length, 'sessionStorage leaked from the previous test').toBe(0);
   });
 });
+
+// `brops.lang` and `brops.theme` were read with a cast: `LS.get<Lang>('brops.lang', 'en')`. A value
+// this build does not know — an older build's, a hand edit, another app on the same origin —
+// became the language, and `translate` indexes `dicts[lang]`: every `t()` on every page threw.
+describe('AppProvider — a stored preference this build does not know', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('falls back to English instead of crashing every translate call', () => {
+    localStorage.setItem('brops.lang', JSON.stringify('xx'));
+    let api!: Api;
+    expect(() => mount((a) => (api = a))).not.toThrow();
+    expect(api.lang).toBe('en');
+    expect(api.t('action.close')).toBe('Close');
+  });
+
+  it('falls back to the dark theme for an unknown theme', () => {
+    localStorage.setItem('brops.theme', JSON.stringify('sepia'));
+    let api!: Api;
+    mount((a) => (api = a));
+    expect(api.theme).toBe('dark');
+  });
+
+  it('still honours a stored value it does know', () => {
+    localStorage.setItem('brops.lang', JSON.stringify('hy'));
+    localStorage.setItem('brops.theme', JSON.stringify('light'));
+    let api!: Api;
+    mount((a) => (api = a));
+    expect(api.lang).toBe('hy');
+    expect(api.theme).toBe('light');
+  });
+});

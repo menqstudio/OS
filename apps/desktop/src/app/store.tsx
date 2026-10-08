@@ -93,8 +93,16 @@ function routeFromHash(): RouteId {
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [route, setRouteState] = useState<RouteId>(routeFromHash);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
-  const [theme, setTheme] = useState<Theme>(() => LS.get<Theme>('brops.theme', 'dark'));
-  const [lang, setLangState] = useState<Lang>(() => LS.get<Lang>('brops.lang', 'en'));
+  // VALIDATED, like the route above. Both were a cast, and `translate` indexes `dicts[lang]`: a
+  // stored language this build does not know made every `t()` on every page throw.
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored: unknown = LS.get<Theme>('brops.theme', 'dark');
+    return stored === 'dark' || stored === 'light' ? stored : 'dark';
+  });
+  const [lang, setLangState] = useState<Lang>(() => {
+    const stored: unknown = LS.get<Lang>('brops.lang', 'en');
+    return stored === 'en' || stored === 'hy' || stored === 'ru' ? stored : 'en';
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [selectedConversation, setSelectedConversationState] =
     useState<ConversationSelection>(NO_CONVERSATION_SELECTED);

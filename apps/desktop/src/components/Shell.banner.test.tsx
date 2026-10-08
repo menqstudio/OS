@@ -19,6 +19,7 @@ import { App } from '../App';
 import { AppProvider, useApp } from '../app/store';
 import { RouteView, pageFocusTarget } from '../app/routes';
 import { Shell } from './Shell';
+import { ErrorState } from './ui';
 import { ToastProvider } from './toast';
 
 // The no-backend banner used to read "Prototype — mock data, no backend connected."
@@ -234,5 +235,39 @@ describe('Shell — a refused second window is reported in a tone the stylesheet
     expect(alert).toHaveTextContent('window cap reached');
     expect(alert).toHaveClass('inline-alert--danger');
     expect(alert).not.toHaveClass('inline-alert--error');
+  });
+});
+
+// Two strings a reader of Armenian or Russian met in English: the dismiss button of the alert above
+// was `aria-label="Dismiss"`, and `ErrorState` — every page's "the read failed" — was headed
+// "Couldn’t load from the backend" with `t` in scope.
+describe('Shell and ErrorState — no English left in a translated page', () => {
+  it('names the window-error dismiss button in the page language', async () => {
+    localStorage.setItem('brops.lang', JSON.stringify('hy'));
+    try {
+      backend({ open_window: () => { throw new Error('window cap reached'); } });
+      render(<AppProvider><Shell><p>stage</p></Shell></AppProvider>);
+      fireEvent.contextMenu(screen.getByText('stage'));
+      fireEvent.click(await screen.findByRole('menuitem', { name: dicts.hy['action.openNewWindow'] }));
+      const alert = await screen.findByRole('alert');
+      const dismiss = alert.querySelector('button')!;
+      expect(dismiss.getAttribute('aria-label')).toBe(dicts.hy['action.close']);
+      expect(dicts.hy['action.close']).not.toBe(dicts.en['action.close']);
+    } finally {
+      localStorage.removeItem('brops.lang');
+    }
+  });
+
+  it.each(['en', 'hy', 'ru'] as const)('heads a failed read from the dictionary (%s)', (lang) => {
+    localStorage.setItem('brops.lang', JSON.stringify(lang));
+    try {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+      render(<AppProvider><ErrorState message="disk I/O error" /></AppProvider>);
+      const title = document.querySelector('.empty-title')!;
+      expect(title.textContent).toBe(dicts[lang]['state.loadFailed']);
+      if (lang !== 'en') expect(title.textContent).not.toMatch(/Couldn.t load from the backend/);
+    } finally {
+      localStorage.removeItem('brops.lang');
+    }
   });
 });

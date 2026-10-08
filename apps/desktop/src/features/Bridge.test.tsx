@@ -281,3 +281,18 @@ describe('the ledger note does not point at something that may not be on the pag
     expect(BR_STR.surfaceLedgerNote[lang]).toMatch(/Decisions page|«Որոշումներ» էջի|странице «Решения»/);
   });
 });
+
+// The panel's accessible name was `STR.panelTitle.en` whatever the language.
+describe('the panel is named in the language of the page', () => {
+  it('uses the Armenian title when the page is Armenian', async () => {
+    localStorage.setItem('brops.lang', JSON.stringify('hy'));
+    try {
+      const { container } = mount({});
+      const section = container.querySelector('section.v-bridge')!;
+      expect(section.getAttribute('aria-label')).toBe(BR_STR.panelTitle.hy);
+      expect(BR_STR.panelTitle.hy).not.toBe(BR_STR.panelTitle.en);
+    } finally {
+      localStorage.removeItem('brops.lang');
+    }
+  });
+});
