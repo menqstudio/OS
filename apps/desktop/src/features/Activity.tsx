@@ -15,6 +15,7 @@ import {
   peakInlineStr,
   hiddenTailStr,
   seededNoteStr,
+  ACTIVITY_WINDOW, windowNoteStr,
 } from './Activity.strings';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +90,9 @@ export function Activity() {
     [state.data],
   );
   const seededCount = (state.data ?? []).length - events.length;
+  // The read is capped (`LIMIT 200`, applied BEFORE the seed filter). When it comes back full
+  // there may be more behind it, and every figure on this page is then a figure about a window.
+  const windowed = (state.data ?? []).length >= ACTIVITY_WINDOW;
   const displayed = useMemo(() => events.slice(0, MAX_BLIPS), [events]);
   const hiddenCount = events.length - displayed.length;
 
@@ -494,6 +498,9 @@ export function Activity() {
             fresh install is owed the reason. */}
         {seededCount > 0 && !state.error && (
           <p className="note" role="note">{seededNoteStr(lang, seededCount)}</p>
+        )}
+        {windowed && !state.error && (
+          <p className="note" role="note">{windowNoteStr(lang)}</p>
         )}
 
         {main}

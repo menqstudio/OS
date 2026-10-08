@@ -10,6 +10,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { AppProvider } from '../app/store';
 import { ToastProvider } from '../components/toast';
 import { Activity } from './Activity';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { ACTIVITY_WINDOW } from './Activity.strings';
 
 function setup() {
   invokeMock.mockImplementation((cmd: string) => {
@@ -94,5 +97,42 @@ describe('Activity — a refused local read is not a governance wall', () => {
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     }
+  });
+});
+
+// `activity::list` is `SELECT * FROM audit_events ORDER BY created_at DESC LIMIT 200`. The page
+// counted what it received and called it the record: total beats, plotted N/total, the rate and
+// every tally — with nothing on screen saying the read stops at 200.
+describe('Activity — a capped read is a window, and says so', () => {
+  const row = (i: number) => ({
+    id: `ev-${i}`, eventType: 'task.created', actorType: 'user', actorId: 'local-operator',
+    entityType: 'task', entityId: `t-${i}`, createdAt: String(1700000000000 + i),
+  });
+  function mount(n: number) {
+    const rows = Array.from({ length: n }, (_, i) => row(i));
+    invokeMock.mockImplementation((cmd: string) =>
+      Promise.resolve(cmd === 'list_activity' ? rows : null));
+    return render(<AppProvider><ToastProvider><Activity /></ToastProvider></AppProvider>);
+  }
+  const windowNote = () => screen.queryByText(/latest 200 audit rows/i);
+
+  it('a read that came back FULL is described as the latest 200, not as the whole record', async () => {
+    mount(ACTIVITY_WINDOW);
+    await waitFor(() => expect(windowNote()).not.toBeNull());
+    expect(windowNote()!.textContent).toMatch(/may be longer/i);
+  });
+
+  it('a read that came back SHORT of the cap is the whole record and carries no such note', async () => {
+    mount(ACTIVITY_WINDOW - 1);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('list_activity'));
+    await waitFor(() => expect(document.querySelector('.v-activity')).not.toBeNull());
+    expect(windowNote()).toBeNull();
+  });
+
+  it('the constant IS the limit the backend query uses', () => {
+    const rust = readFileSync(resolve(process.cwd(), 'src-tauri/core/src/repo.rs'), 'utf8');
+    const m = /FROM audit_events ORDER BY created_at DESC LIMIT (\d+)/.exec(rust);
+    expect(m, 'activity::list no longer reads with a literal LIMIT — re-derive the window').not.toBeNull();
+    expect(Number(m![1])).toBe(ACTIVITY_WINDOW);
   });
 });
