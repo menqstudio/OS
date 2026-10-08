@@ -241,6 +241,14 @@ export const STR = {
     hy: 'Այստեղ desktop backend չկա, ուստի governed proxy հրամանն ընդհանրապես գոյություն չունի։',
     ru: 'Здесь нет десктопного бэкенда, поэтому команды governed-прокси вообще не существует.',
   },
+  nd_command_not_allowed: {
+    en: 'This window is not permitted to invoke the governed-turn command, so it never ran and the '
+      + 'request never left the desktop. The capability set this build ships does not grant it.',
+    hy: 'Այս պատուհանին թույլատրված չէ կանչել governed-turn հրամանը, ուստի այն չի գործարկվել, և '
+      + 'հարցումը desktop-ից դուրս չի եկել։ Այս տարբերակի capability-ների խումբը դա չի թույլատրում։',
+    ru: 'Этому окну не разрешено вызывать команду governed-turn, поэтому она не выполнялась и '
+      + 'запрос не покидал десктоп. Набор capability этой сборки её не разрешает.',
+  },
   nd_unclassified_transport_failure: {
     en: 'The transport failed with something outside the known taxonomy. It is reported verbatim '
       + 'rather than forced into a category it did not report.',

@@ -254,6 +254,10 @@ export const NON_DECISIONS = [
   'malformed_broker_reply',
   /** There is no Tauri backend at all (a plain browser) — the proxy command does not exist here. */
   'no_desktop_backend',
+  /** Tauri's ACL refused the window this command. It never ran, so nothing left the desktop.
+   *  Observed on the first real install, 2026-10-09: the shipped capability set does not grant
+   *  `governed_turn_execute`, and this is what every send returns. */
+  'command_not_allowed',
   /** The transport rejected with something outside the taxonomy above. Reported verbatim, never
    *  silently folded into one of the named cases. */
   'unclassified_transport_failure',
@@ -313,6 +317,10 @@ export function classifyTransportFailure(e: unknown): { kind: NonDecision; detai
   const detail = messageOf(e);
   for (const kind of ['broker_unsupported_platform', 'broker_unavailable', 'broker_transport_failed'] as const) {
     if (detail.startsWith(kind)) return { kind, detail };
+  }
+  // Tauri's own two spellings of an ACL refusal: release builds, and debug builds.
+  if (/not allowed by ACL|not allowed\. Permissions associated/.test(detail)) {
+    return { kind: 'command_not_allowed', detail };
   }
   if (detail === 'malformed_request') return { kind: 'malformed_request', detail };
   if (detail === 'malformed_broker_reply') return { kind: 'malformed_broker_reply', detail };

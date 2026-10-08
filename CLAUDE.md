@@ -82,7 +82,7 @@ Phase status is in `PROJECT_STATE.md` and the roadmap; this file does not carry 
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
 cd apps/desktop/src-tauri && cargo test --workspace              # 1430 passed
-cd apps/desktop && npm ci && npm run typecheck && npm test       # 1151 tests / 87 files
+cd apps/desktop && npm ci && npm run typecheck && npm test       # 1153 tests / 87 files
 python3 tools/check_canon_budget.py                              # the read set fits
 python3 tools/check_state_fields.py                              # the mirror has no dead fields
 python3 tools/check_handoff_ready.py                             # a new session could take over
@@ -109,7 +109,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **The production gate is SHUT**, and only the Owner opens it after an independent audit — not a green CI run, not the Builder's confidence. Three refusals hold it. There is no `platform_governed_execution_supported()` in the tree; that is the §0.1 spec symbol, and documents citing it are citing a name that does not exist:
 
-1. chat: `governed_verification_unconfigured()` returns `Some(...)` while any of its five compile-time inputs is absent — all are. **It guards chat only**: Bridge's `governed_turn_execute` is outside the manifest, so the window is refused it before `connect_broker` (read, not run); the renderer rejects all but `trusted_verified`
+1. chat: `governed_verification_unconfigured()` returns `Some(...)` while any of its five compile-time inputs is absent — all are. **It guards chat only**: Bridge's `governed_turn_execute` is outside the manifest, so the window is refused it before `connect_broker` (seen 10-09); the renderer rejects all but `trusted_verified`
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest verifies under the floor-pinned root anchor** — which nothing in the shipped app sets; then it commits only `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` — the Owner's line
 
@@ -123,7 +123,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 
 **There is no path in this repository to a production trust root.** `broctl build-registry` hardcodes `"production": false`, `broctl keygen --production` refuses, and `bro_signature` refuses a development registry when the pin comes from the production path. See [`docs/DEBIAN_DEPLOYMENT.md`](./docs/DEBIAN_DEPLOYMENT.md).
 
-**On POSIX the app never provisions itself** — a root installer does (`brops_install_anchor`, T-137). The `.deb` declares it as `postinst` (T-138/139); no `dpkg -i` has been run, so first launch still refuses here.
+**On POSIX the app never provisions itself** — a root installer does (`brops_install_anchor`, T-137). The `.deb` declares it as `postinst` (T-138/139); installed here 2026-10-09: first launch runs.
 
 ## 7. Rules for AI sessions
 
@@ -174,7 +174,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 **Production վստահության արմատ սարքելու ճանապարհ այս repo-ում չկա** — `broctl`-ը կոշտ գրում ա `"production": false` ու `--production`-ը մերժում ա։
 
-**POSIX-ում ծրագիրն ինքը չի provision անում** — անում ա root installer-ը (`brops_install_anchor`, T-137), որը `.deb`-ը հայտարարում ա `postinst`, բայց `dpkg -i` դեռ չի արվել։
+**POSIX-ում ծրագիրն ինքը չի provision անում** — անում ա root installer-ը (`brops_install_anchor`, T-137), որը `.deb`-ը հայտարարում ա `postinst`, տեղադրվել ա 2026-10-09-ին։
 
 ## 5. Կանոններ
 

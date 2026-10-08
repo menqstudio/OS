@@ -61,7 +61,7 @@ below. The engine answers from its own stores
 **verbatim**, so the three-valued shape survives the hop.
 
 **As shipped the window cannot invoke the four reads**: they are outside the ACL manifest, and tauri
-refuses such a command (read in its source, not run). See `docs/OWNER_ACTION_REQUIRED.md` §2h.
+refuses such a command (seen installed, 2026-10-09). See `docs/OWNER_ACTION_REQUIRED.md` §2h.
 
 **Three values, and the third is not an error.** A read is `ok` (records, possibly zero), `blocked`
 (the engine was reached and refused) or `unreachable` (no engine). `blocked` and `unreachable` are
