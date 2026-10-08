@@ -44,6 +44,17 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > alone turns the gate RED. The session may not change repository rules; the file edit is one line
 > and waits for the Owner to change the setting.
 >
+> **5. A defect in the isolated signer, found by reproducing `NM-ORACLE-07` — NOT fixed, because
+> the fix is security code.** With a stored blob damaged behind the store's back,
+> `IsolatedSigner.sign_result` does not refuse `hash_mismatch`: it **raises** `SignerError('store
+> corruption: blob digest != handle')`, for the system, output, record and lease handles alike
+> (measured). No signature is minted, so it fails closed; but `sign_result` documents that it never
+> raises on hostile input, and the `hash_mismatch` refusal behind that raise is unreachable. The
+> matrix row is `blocked` on it with the measurement. **Recommended: put it in the next Architect
+> audit's scope and fix it in its own audited engine pull request** — turn the corruption arm of
+> `ArtifactStore.read_verified` into the refusal the design names. Small, and not to be done
+> without the audit: it changes what the signer answers on its trust boundary.
+>
 > **Also recorded, because it existed nowhere else:** a `git stash` on this machine held one
 > uncommitted `TASKS.md` row and nothing more — *`T-114` — Debian deployment-host inventory,
 > evidence-based cleanup classification, cleanup, and final verification. Preserve SSH, Codex,

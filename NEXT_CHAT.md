@@ -5,9 +5,9 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `3c73d8b`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `8d95b5e`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `3c73d8b`.** PR #345 on `canon/zero-trust-2026-10-08` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `8d95b5e`.** PR #346 on `t062/reason-name-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: draft the 0.1.0 release.
 >
@@ -48,8 +48,8 @@ CI stamps the PR body (T-163); by hand: `tools/stamp_pr_head.py --pr <N>`.
 Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
-cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2740 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1424 passed
+cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
+cd apps/desktop/src-tauri && cargo test --workspace              # 1425 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 999 tests / 85 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_state_fields.py       # no field of the mirror answers to nothing
