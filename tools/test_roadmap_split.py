@@ -114,6 +114,10 @@ ANNOTATED_LINES: dict[int, str] = {
     71: "T-021d: the phase-2 status-board cell reads 11/11. The board is an INDEPENDENT surface from "
         "the checkboxes -- check_roadmap_order compares the two on purpose -- so closing the boxes "
         "without moving it would be a phase that says two different things about itself",
+    124: "Owner, 2026-10-08: every commit is MenQ <menqstudio@gmail.com> and nobody else. §B.3's "
+         "commit-identity bullet told every session to end its commits with a Claude Co-Authored-By "
+         "trailer; it says the opposite now, in the same two lines",
+    125: "the second line of the same §B.3 bullet (see 124) -- it carried the trailer text itself",
 }
 
 

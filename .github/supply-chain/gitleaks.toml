@@ -39,8 +39,17 @@ regexes = [
     '''0{16,}''',
     # BRO_OPERATOR_ROOT_PUBKEY committed in engine/.github/workflows/verify.yml — this is
     # the operator root PUBLIC key (the CI registry pin), safe by design to commit. The
-    # generic-api-key detector trips on the 64-hex string; allow this exact public value.
-    '''7231f58d738616115dcd2a71502360331076465f253b3723c8db9be01361df3c''',
+    # generic-api-key detector trips on the 64-hex string; allow this public value.
+    #
+    # ANCHORED ON ITS FIRST 40 HEX, not on all 64 (2026-10-08). gitleaks reads a file in
+    # chunks and does not always capture the whole value: a key that straddles a chunk end
+    # is reported as its first 44-63 characters, the exact-64 regex then does not match, and
+    # the gate fails on a public key because of the file's BYTE SIZE. Measured with the pinned
+    # 8.21.2 over .github/workflows/ci.yml with a padding comment of 0-100,000 bytes: the
+    # exact-64 entry fired at 80 of 400 sizes around four boundaries, this entry at 0 of the
+    # same 400, and a different 64-hex value under the same variable name is still reported.
+    # Start-anchored, so it is the same value or a truncation of it and nothing else.
+    '''^7231f58d738616115dcd2a71502360331076465f[0-9a-f]{0,24}$''',
 ]
 # Commit SHAs known to contain only rotated/example secrets can be listed here.
 commits = []

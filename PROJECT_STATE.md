@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `873b3ae`.** PR #344 on `t062/oracle-parity-rows` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `3c73d8b`.** PR #345 on `canon/zero-trust-2026-10-08` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: 4 rows blocked or bound? (T-062)
+> **Next:** Owner: draft the 0.1.0 release.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -67,8 +67,8 @@ therefore rewrites a plaintext `.head` and produces no `.head.sig`. This is O-2 
 never run outside a test.
 
 **The app version is stated five times in four files;** `tools/check_version_parity.py` refuses drift.
-No `v*` tag is compared — `release.yml` has never run — and what the files mean between tags is a
-release policy the Owner has not stated (`T-063`).
+No `v*` tag is compared and `release.yml` has never run — yet an UNSIGNED `brops-desktop-v0.1.0`
+release is published by hand (found 2026-10-08). The tag policy is the Owner's (`T-063`).
 
 **Branch protection is in force again — the repository is public (read live 2026-10-08).**
 All 35 contexts in `config/required-checks.json` are required on `main`, with `strict` and

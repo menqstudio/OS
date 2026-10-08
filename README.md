@@ -497,6 +497,17 @@ development box is Debian**, so `brops` is the artifact you get there.
 
 ---
 
+## Լիցենզիա · Licence
+
+**HY:** Այս repo-ն public ա, բայց **licence չի տրված**. `LICENSE` ֆայլ չկա։ Բոլոր իրավունքները
+պահպանված են, մինչև Owner-ը պայմանները որոշի. կոդը կարդալ կարելի ա, օգտագործելու, պատճենելու կամ
+տարածելու իրավունք տրված չի։
+
+**EN:** This repository is public and carries **no licence**: there is no `LICENSE` file. All
+rights are reserved until the Owner states terms — the source can be read; no right to use, copy
+or redistribute it is granted. *(Measured 2026-10-08: no `LICENSE*` at the root, and GitHub's
+repository record reports no licence.)*
+
 ## Բրենդը · Brand
 
 **HY:** Հիմքերը MenQ-ի foundation token-ներն են՝ `menqstudio/MenQ-Standard`, որոշում `D-025`։

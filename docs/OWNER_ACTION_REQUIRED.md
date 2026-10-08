@@ -10,6 +10,48 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > trust and no person carries a key. From 2026-09-20 to 2026-09-30 this page asked you to mint an
 > offline root anyway; that contradicted your decision and was removed in T-130. See §0.
 
+> **2026-10-08 — a zero-trust read of the whole position: four things found, two of them yours.**
+>
+> **1. A release is PUBLISHED on this public repository, and nothing in the canon says so.**
+> `BroPS 0.1.0 desktop`, tag `brops-desktop-v0.1.0`, published 2026-08-03, marked *Latest*, not a
+> draft, with two Windows installers: `BroPS_0.1.0_x64-setup.exe` (4,670,233 bytes) and
+> `BroPS_0.1.0_x64_en-US.msi` (6,467,584 bytes). Both were downloaded and read: **neither is
+> signed** — the `.exe` has an empty PE security directory and the `.msi` has no
+> `DigitalSignature` stream. The tag's commit is `fb304a2`, which is **not an ancestor of `main`**
+> (the release names the branch `feat/windows-broker-machineproof`). Download count: 0 on both.
+> `release.yml` has never run, so this was published by hand. The canon says the release refuses
+> to ship unsigned and that the production gate is shut; an unsigned installer marked *Latest* on
+> a public page is the opposite of both. **Recommended: make it a draft** — it stays, with its
+> history, and stops being offered. Release is the Owner's alone, and the session's attempt to do
+> it was refused by its own permission rules, so this one is yours to press. `T-063` (what a tag
+> means between releases) should be decided with it: there is a tag and no policy.
+>
+> **2. No licence.** There is no `LICENSE` file and GitHub reports none, on a public repository.
+> The front page now says so in words — *all rights reserved until the Owner states terms* — which
+> is what the absence already meant in law and what no reader could have known. The terms
+> themselves are still yours (§2f).
+>
+> **3. `gitleaks.toml` — DONE (item 1 of the 2026-09-20 list below).** Reproduced before it was
+> touched, with the pinned 8.21.2: the exact-64 allowlist entry fired at 80 of 400 file sizes
+> around four chunk boundaries; the entry is now anchored on the key's first 40 hex, fires at 0 of
+> the same 400, and still reports a different value under the same variable name.
+>
+> **4. The Windows tools job (item 2 below) has met its condition six times over and is still not
+> required.** `Tools · gate self-tests on Windows (python)` concluded `success` on the six most
+> recent `ci` runs on `main` (`e9358e7` … `3c73d8b`). Promoting it means moving it from
+> `deliberately_excluded` to `contexts` in `config/required-checks.json` AND adding it to live
+> branch protection **at the same moment** — `check_repo_state.py` compares the two, so either one
+> alone turns the gate RED. The session may not change repository rules; the file edit is one line
+> and waits for the Owner to change the setting.
+>
+> **Also recorded, because it existed nowhere else:** a `git stash` on this machine held one
+> uncommitted `TASKS.md` row and nothing more — *`T-114` — Debian deployment-host inventory,
+> evidence-based cleanup classification, cleanup, and final verification. Preserve SSH, Codex,
+> networking, package management, certificates, and all ambiguous data; no destructive action
+> before the Phase 3 report — ChatGPT — Review — `chore/deployment-host-audit`*. That branch has no
+> commit of its own. The row is preserved here so the stash can be dropped; whether `T-114` is
+> still wanted is the Owner's to say.
+
 > **2026-10-08 — settled: the repository is public again and `main` is protected (`T-168`).**
 > Read live on 2026-10-08, asked as the repository's owner: `GET /repos/menqstudio/OS` answers
 > `"private": false`, and `GET /branches/main/protection` answers with **35** required contexts —
