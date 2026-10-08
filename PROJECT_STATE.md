@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-05 — 120 pull requests merged (`#219`–`#339`), `main` at
+**Last updated · Վերջին թարմացում:** 2026-10-08 — 120 pull requests merged (`#219`–`#339`), `main` at
 `e9358e7`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `e9358e7`.** PR #340 on `t168/tools-use-the-repo-owners-account` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **⏭️ CURRENT ACTIVE: PR #341 · branch `front-page-v1`** (base `main`, tip `99c8c3c`, task unstated).
 >
-> **Next:** Owner: main has no branch protection while private (T-168).
+> Repository front page standard v1 (MenQ-Standard CR-0011): cover, start-here links and a four-line summary at the top of the README; the rest of the README is untouched.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->

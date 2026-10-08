@@ -1,0 +1,68 @@
+{
+ "name": "OS",
+ "brand": "menq",
+ "family": {
+  "en": "MenQ Studio · Operations desktop",
+  "hy": "MenQ Studio · Գործառնությունների desktop"
+ },
+ "tagline": {
+  "en": "A governed AI operations desktop: one product assembled from two halves.",
+  "hy": "Կառավարվող AI գործառնությունների desktop. մեկ արտադրանք՝ երկու կեսից։"
+ },
+ "start": [
+  [
+   "Start here",
+   "START_HERE.md"
+  ],
+  [
+   "Project state",
+   "PROJECT_STATE.md"
+  ],
+  [
+   "Execution roadmap",
+   "MASTER_EXECUTION_ROADMAP.md"
+  ],
+  [
+   "Rules for AI sessions",
+   "CLAUDE.md"
+  ]
+ ],
+ "facts": {
+  "en": [
+   [
+    "What it is",
+    "A desktop for governed AI operations; version 0.1.0"
+   ],
+   [
+    "Who it serves",
+    "Gev and MenQ Studio, running AI agents under explicit gates"
+   ],
+   [
+    "State",
+    "Production gate SHUT; the standing independent verdict is RED (measured figures in the table below)"
+   ],
+   [
+    "Built with",
+    "Tauri 2, Rust, React 19, TypeScript, Vite"
+   ]
+  ],
+  "hy": [
+   [
+    "Ինչ է",
+    "Կառավարվող AI գործառնությունների desktop. տարբերակ 0.1.0"
+   ],
+   [
+    "Ում համար",
+    "Գևի և MenQ Studio-ի համար՝ AI գործակալների աշխատանքը բացահայտ դարպասներով"
+   ],
+   [
+    "Վիճակ",
+    "Արտադրական դարպասը ՓԱԿ է. գործող անկախ վճիռը RED է (չափված թվերը ներքևի աղյուսակում)"
+   ],
+   [
+    "Կառուցված է",
+    "Tauri 2, Rust, React 19, TypeScript, Vite"
+   ]
+  ]
+ }
+}

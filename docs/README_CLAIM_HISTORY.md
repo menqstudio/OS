@@ -818,3 +818,15 @@ that was about half of what its own printed command returns.
 | Verification-sheet alt text: **2315** engine tests, **43** gate scripts | removed from the alt text | the sheet itself (`docs/brand/readme/verification-light.svg`) prints 2205 and 42, as of 2026-09-19; the alt text now says the sheet is dated and points at the table. **The sheet was not redrawn** |
 | **31** pull requests, **121** files, **10,599** inserted lines since the audited head, undated | **60 / 172 / 21,997**, dated | `git log --format=%s 75fca65..73e5ccb \| grep -oE "\(#[0-9]+\)$" \| sort -u \| wc -l` → 60; `git diff --shortstat 75fca65..73e5ccb` → `172 files changed, 21997 insertions(+), 2109 deletions(-)`. Nothing recomputes this figure, so it is stale again after the next merge; the page now says so and dates it |
 | "The governed chain is proven end to end" with no word about what executes | qualified | `engine/ci/live/run_live_turn.sh` and `run_ladder_turn.sh` install `proof_executor`, which hashes its inputs; `docs/design/DEBIAN_INSTALL_PROVISIONING.md` §10: "no model is called, and no real-execution executor exists in the tree" |
+
+## 14. Front block added on 2026-10-08 (repository front page standard v1, MenQ-Standard CR-0011)
+
+The front page gained a block above the existing title: a cover picture (`docs/assets/front/`), a "Start here" line and a four-row summary in English and Armenian. It introduces no new number. Every figure in it repeats one already on this page and is bound to the same source:
+
+| Claim in the block | Source on this page |
+| :--- | :--- |
+| version 0.1.0 | Document metadata → Version (`apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`) |
+| production gate SHUT | Document metadata → Production gate |
+| standing independent verdict RED | Document metadata → Standing independent verdict |
+
+The MenQ avatar above the title was removed: the cover carries the official MenQ wordmark. The chain picture (`docs/brand/readme/hero-*.svg`) stays where it was.
