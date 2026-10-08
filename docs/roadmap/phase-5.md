@@ -71,7 +71,7 @@ can be circumvented from the desktop → stop, it is a wall issue → audited en
 >    **files guard proven**, and nothing proved it. A guard nobody tests is a guard that has
 >    never been shown to hold.
 >
-> Both closed. The rest was verified rather than rebuilt.
+> Both closed. The rest was verified rather than rebuilt. **Corrected 2026-10-08 (`R3-0081`): the second was closed against a backend that does not exist.** The guard tests were driven with `scope guard: path not in the declared protected_scope` and `permission denied`, strings nothing in `src-tauri`, the engine or the bridge produces; `read_file` is the desktop's own confinement plus a read, and the engine is not consulted on that route. The tests now use the strings `files.rs` and Tauri return, and the page no longer says the engine scope guard denied a file. What is proven is that the page classifies those refusals honestly — not an engine guard over files, which is not there to prove.
 
 **Definition of Done.**
 - [x] `memory`, `knowledge`, `research`, `files` pages to full §D incl. `blocked`. — `Memory.tsx` 815 · `Knowledge.tsx` 798 · `Research.tsx` 507 · `Files.tsx` 635, each with the real state set (`Skeleton`/`EmptyState`/`ErrorState`, `aria-live`) against the real IPC and no fixture layer. `research`'s `blocked` was **added this phase** and is the state the shipped app will actually be in.

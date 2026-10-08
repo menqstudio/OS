@@ -276,13 +276,17 @@
       ]
     },
     "frontend_tests": {
-      "value": 1059,
+      "value": 1075,
       "command": "cd apps/desktop && npm ci && npm test",
       "derive": null,
       "measured": {
         "date": "2026-10-08",
-        "head": "120f118",
+        "head": "40244f0",
         "environments": {
+          "Debian 13 (trixie) native @ 40244f0 + tests driven by what the backend sends": {
+            "ran": 1075,
+            "skipped": 0
+          },
           "Debian 13 (trixie) native @ 120f118 + no motion item carries two easing functions": {
             "ran": 1059,
             "skipped": 0
@@ -383,7 +387,8 @@
         1033,
         1041,
         1051,
-        1057
+        1057,
+        1059
       ]
     },
     "a11y_tests": {

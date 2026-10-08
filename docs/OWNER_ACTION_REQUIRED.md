@@ -61,11 +61,11 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > without the audit: it changes what the signer answers on its trust boundary.
 >
 > **6. The NEXT independent audit — its scope, measured, so it can start.** The tenth round
-> read `main` at `75fca65`. Since then, measured `75fca65..main` at `a90ca90` on 2026-10-08:
-> **93** squash-merged pull requests (`#253`–`#346`), **886** files, **104,780** inserted lines —
-> the canon said 31 / 121 / 10,599 until today. Where the security weight is: `engine/runtime` and
+> read `main` at `75fca65`. Since then, measured `75fca65..main` at `40244f0` on 2026-10-08:
+> **112** squash-merged pull requests (`#253`–`#365`), **903** files, **106,095** inserted lines —
+> the canon said 31 / 121 / 10,599 until that day, and 93 / 886 / 104,780 at `a90ca90`. Where the security weight is: `engine/runtime` and
 > `engine/tools` **48** files (+2,961 / −958); `apps/desktop/src-tauri` **112** files
-> (+16,383 / −2,827); `bridge` **12** files. Read first, because each reached `main` on an Owner
+> (+16,392 / −2,828); `bridge` **12** files. Read first, because each reached `main` on an Owner
 > waiver with no Architect audit: `#313`, `#314`, `#321` (roadmap §G.2 names them). Then: `T-020`
 > (`#219`, the floor writer — C3 and a second pass were never done), `T-021a`–`d` (`#254`–`#257`),
 > and finding 5 above. **Recommended: commission it before any new build work** — every row marked

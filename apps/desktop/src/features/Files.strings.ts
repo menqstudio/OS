@@ -90,10 +90,12 @@ export const STR = {
     hy: 'Կնքված է — հնարավոր չէ բացել',
     ru: 'Запечатан — открыть нельзя',
   },
+  // `read_file` is the desktop's own confinement and a read; the engine is never asked on this
+  // route. This said "The engine scope guard denied this file".
   blockedHint: {
-    en: 'The engine scope guard denied this file. Reason:',
-    hy: 'Շարժիչի scope-պահակը մերժեց այս ֆայլը։ Պատճառ՝',
-    ru: 'Охрана области движка отклонила этот файл. Причина:',
+    en: 'The desktop refused to open this file. The engine is not consulted on this route. Reason:',
+    hy: 'Desktop-ը մերժեց այս ֆայլի բացումը։ Շարժիչին այս ճանապարհին չեն դիմում։ Պատճառ՝',
+    ru: 'Десктоп отказался открыть этот файл. Движок на этом пути не запрашивается. Причина:',
   },
   selected: {
     en: 'Selected',

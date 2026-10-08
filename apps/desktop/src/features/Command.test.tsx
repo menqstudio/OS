@@ -94,6 +94,58 @@ async function dispatchFailingWith(message: string) {
   return await screen.findByRole('alert');
 }
 
+// The tests below this block REJECT the invoke. The backend does not: `stream_run_step` reports a
+// refusal, an approval gate and most failures as frames on the channel and then resolves
+// (`on_event.send(RunStepEvent::Error { .. })`, `::ApprovalRequired { .. }` in commands.rs). With
+// `Channel` mocked as an empty class and nothing ever calling `onmessage`, the page's three
+// event branches — the path every real refusal takes — were reached by no test.
+async function dispatchEmitting(frames: Array<Record<string, unknown>>) {
+  invokeMock.mockImplementation((cmd: string, args?: unknown) => {
+    if (cmd === 'list_runs') return Promise.resolve([RUN]);
+    if (cmd === 'list_run_steps') return Promise.resolve([STEP]);
+    if (cmd === 'stream_run_step') {
+      const channel = (args as { onEvent: { onmessage?: (e: unknown) => void } }).onEvent;
+      for (const frame of frames) channel.onmessage?.(frame);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve(null);
+  });
+  render(<AppProvider><ToastProvider><Command /></ToastProvider></AppProvider>);
+  fireEvent.click(await screen.findByRole('button', { name: /Draft the quarterly report/ }));
+  await screen.findByText('Gather the source figures');
+  fireEvent.click(screen.getByRole('button', { name: 'Execute step' }));
+}
+
+describe('Command — what the backend sends down the channel', () => {
+  it('a refusal delivered as an error FRAME is shown as a refusal', async () => {
+    await dispatchEmitting([{ type: 'error', message: 'approval was rejected for this step' }]);
+    const alert = await screen.findByRole('alert');
+    expect(alert.className).toContain('cmd-outcome--blocked');
+    expect(alert.textContent).toContain('approval was rejected for this step');
+  });
+
+  it('a failure delivered as an error FRAME is shown as a failure', async () => {
+    await dispatchEmitting([{ type: 'error', message: 'connection reset by peer' }]);
+    const alert = await screen.findByRole('alert');
+    expect(alert.className).not.toContain('cmd-outcome--blocked');
+    expect(alert.textContent).toContain('connection reset by peer');
+  });
+
+  it('an approval-gated step halts and routes to Approvals, and is not an error', async () => {
+    await dispatchEmitting([{ type: 'approvalRequired', approvalId: 'ap-1' }]);
+    expect(await screen.findByRole('button', { name: 'Go to Approvals' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a clean run raises neither', async () => {
+    await dispatchEmitting([{ type: 'delta', text: 'working' }, { type: 'done' }]);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('stream_run_step', expect.anything()));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Execute step' })).not.toBeDisabled());
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Go to Approvals' })).toBeNull();
+  });
+});
+
 describe('Command — a refusal at the wall is not a failure', () => {
   it('renders a governed refusal as a refusal, with the engine reason verbatim', async () => {
     const alert = await dispatchFailingWith('permission denied: lease not granted for path /etc');

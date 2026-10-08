@@ -22,6 +22,10 @@
  * Numbers and booleans are now stringified, and an array's printable character codes are
  * additionally pushed in decoded form — the sweep sees the bytes as the text they would become,
  * not as digits. The decode survives one out-of-range byte (ninth audit `I-03`).
+ *
+ * Typed arrays, `ArrayBuffer`, `DataView`, `Map` and `Set` are visited as well. Until 2026-10-08
+ * they were not, while this comment said every non-string leaf was: a `Uint8Array` of the same
+ * character codes, a Map value and a Set member each went through unseen.
  */
 export function flatten(value: unknown, out: string[] = []): string[] {
   if (typeof value === 'string') out.push(value);
@@ -30,6 +34,19 @@ export function flatten(value: unknown, out: string[] = []): string[] {
   } else if (Array.isArray(value)) {
     out.push(...decodeCharCodeRuns(value));
     value.forEach((v) => flatten(v, out));
+  } else if (value instanceof ArrayBuffer) {
+    flatten(Array.from(new Uint8Array(value)), out);
+  } else if (ArrayBuffer.isView(value)) {
+    // A typed array's elements are the character codes; a DataView has none of its own, so its
+    // bytes are read. Both go through the plain-array branch, so the decode is the same one.
+    flatten(value instanceof DataView
+      ? Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+      : Array.from(value as unknown as ArrayLike<number | bigint>, (v) => Number(v)), out);
+  } else if (value instanceof Map) {
+    // `Object.entries` of a Map or a Set is empty: both were invisible, keys and members alike.
+    for (const [k, v] of value) { flatten(k, out); flatten(v, out); }
+  } else if (value instanceof Set) {
+    for (const v of value) flatten(v, out);
   } else if (value && typeof value === 'object') {
     for (const [k, v] of Object.entries(value)) { out.push(k); flatten(v, out); }
   }
