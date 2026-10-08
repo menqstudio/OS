@@ -4,7 +4,7 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `f8bf910`.** PR #357 on `cockpit/slider-pointer` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `b0887cb`.** PR #358 on `cockpit/cancel-only-own-turn` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
 > **Next:** Owner: commission the next independent audit.
 >
