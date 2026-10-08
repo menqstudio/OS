@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `7bd1d69`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `c545043`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `7bd1d69`.** PR #342 on `settle/after-341` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `c545043`.** PR #343 on `settle/protection-restored` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: the repo is public now; protect main (T-168).
+> **Next:** T-062: bind the rows a test can bind.
 >
 > **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -85,7 +85,7 @@ operator PUBLIC key is allowed by its whole 64-hex value, and gitleaks captured 
 at one file size and not at another (79,665 bytes red, 79,744 green) — and
 `config/required-checks.json` should promote the new Windows tools job once it has one green run.
 [`docs/OWNER_ACTION_REQUIRED.md`](docs/OWNER_ACTION_REQUIRED.md) is the page of record. Branch
-protection is NOT in force (private; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
+protection is in force again (public; `T-168`). O-1…O-5 are all OPEN and none needs an Owner-minted artifact.
 
 **There is no path in this repository to a production trust root** — everything runnable
 produces a *development* one, enough to exercise every path end to end and not enough to close
