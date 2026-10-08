@@ -73,7 +73,9 @@ Tasks render two ways over the same data:
 
 **State model** (canonical, matches [USER_FLOWS.md](USER_FLOWS.md) §3 Project Execution — AI_RUNTIME has no section of that name):
 
-`planned → active → blocked → review → done`, with `cancelled` reachable from any non-terminal state.
+`inbox → planned → active → blocked → review → done`, with `cancelled` reachable from any non-terminal state.
+
+- **inbox** — where every task is created: the column default in `core/schema/0001_initial.sql` and the literal `repo::tasks::create` inserts. Captured, not yet triaged. This model listed six states and the store has had seven since the first migration.
 
 - **planned** — defined, not started. Has owner, criteria; may have unmet dependencies (shown, and start is gated until they clear).
 - **active** — owner (human or agent) is working. For agent owners this maps to the agent execution model `assigned → accepted → running` (see §6).
@@ -113,7 +115,7 @@ Per-flow states per view: **loading** (row skeletons); **empty** (view-specific 
 ## 6. Create task from message & assign to agent
 
 ### 6.1 Create task from message
-In any Group Chat (project or team room), a message action **Create task from message** opens a pre-filled task composer: title from the message, description carrying the quote and a back-link to the source message, project pre-set (project rooms) or chosen (team rooms), owner defaulting to the mentioned party. Owner confirms or edits, then creates. The task starts in **planned**, is linked to the message, and emits `task.created`. The source message shows a "→ task" chip.
+In any Group Chat (project or team room), a message action **Create task from message** opens a pre-filled task composer: title from the message, description carrying the quote and a back-link to the source message, project pre-set (project rooms) or chosen (team rooms), owner defaulting to the mentioned party. Owner confirms or edits, then creates. The task starts in **inbox** (the store's creation default), is linked to the message, and emits `task.created`. The source message shows a "→ task" chip.
 
 ### 6.2 Assign to agent
 Assigning a task to an agent (from the task, the board, or a chat mention like `@Forge take this`) opens the **delegation contract** required by AI_RUNTIME. The owner must confirm, and the UI must show:

@@ -85,7 +85,7 @@ A global **Approval drawer** (reachable from anywhere; badge count on the app sh
 - **Scope** — the exact boundary the approval binds to.
 - **Consequences** — known effects, spelled out.
 - **Reversibility** — reversible / partially reversible / irreversible.
-- **Expiry** — when this approval request goes stale.
+- **Expiry** — when this approval request goes stale. **Not stored today:** the `approvals` table has no expiry column, and its status trigger (`core/schema/0019_approval_escalated_status.sql`) admits only `pending`, `approved`, `rejected`, `consumed` and `escalated`.
 - **Requester** — the agent or command requesting, plus its correlation ID.
 Additional shown context: risk class, the approval **level** (A0–A3), and, where applicable, the candidate **version or hash** the approval binds to.
 
@@ -110,7 +110,7 @@ Additional shown context: risk class, the approval **level** (A0–A3), and, whe
 - **Empty queue** — "No approvals waiting. Actions that need your sign-off will appear here."
 - **Error** — "Couldn't load approvals" with Retry; already-fetched items remain actionable if their binding is still valid.
 - **Offline** — Approvals are **disabled** while offline (an approval must bind to a verifiable candidate). Banner: "Approvals need a live connection." Emergency Stop remains available.
-- **Expired approval** — Item greys out with an "Expired" badge; Approve is replaced by "Request a fresh action". Any partial execution is reported precisely, never hidden.
+- **Expired approval** *(specified, not built — there is no `expired` status to render; see Expiry above)* — Item greys out with an "Expired" badge; Approve is replaced by "Request a fresh action". Any partial execution is reported precisely, never hidden.
 - **Blocked** — Requester is blocked pending this approval; the item shows the blocked agent/command and a link to its run.
 
 ---
