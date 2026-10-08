@@ -792,8 +792,8 @@ const TASKS_CSS = `
    than the form: what state the dispatch is really in matters more than the inputs. */
 .dsp-note { font-size: 12.5px; line-height: 1.55; margin: 0 0 10px; }
 .dsp-warn { padding: 10px 12px; margin-bottom: 14px; border-radius: 10px; font-size: 12px;
-  line-height: 1.55; color: var(--ink); border: 1px solid rgb(var(--warn-rgb,var(--line-rgb))/.45);
-  background: rgb(var(--warn-rgb,var(--line-rgb))/.1); }
+  line-height: 1.55; color: var(--ink); border: 1px solid rgb(var(--warning-rgb)/.45);
+  background: rgb(var(--warning-rgb)/.1); }
 .dsp-mono { font-family: var(--f-mono); font-size: 11px; word-break: break-all; }
 .dsp-grant { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 14px; border-radius: 10px;
   border: 1px solid rgb(var(--line-rgb)/.8); background: rgb(var(--raised-rgb)/.45); }

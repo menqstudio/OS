@@ -104,6 +104,26 @@ describe('no transition or animation item carries two easing functions', () => {
     expect(tokens.get('--spring')).toMatch(/cubic-bezier/);
   });
 
+  // `var(--warn, var(--danger))` reads as a warning tone with a safe default. `--warn` is declared
+  // nowhere, so it is the default, always: the unrecognised-trigger note in Automations was danger
+  // red. `tools/check_c1_tokens.py` holds every var() that has no fallback to a declaration and lets a fallback
+  // excuse an undeclared name; a token that only ever resolves to its fallback is a typo.
+  it('no var() falls back because its token is declared nowhere', () => {
+    // Written at runtime — each one has a `style.setProperty` or an inline `style` that sets it,
+    // checked by name on 2026-10-09 — so no stylesheet declares them.
+    const RUNTIME = new Set(['--i', '--d', '--p', '--core-size', '--cx', '--cy', '--mx', '--my', '--rx', '--ry', '--menq-motion-easing']);
+    // Knobs: nothing sets these today and the stylesheet's own default is the design. Listed by
+    // name so that a NEW undeclared token is a finding rather than one more quiet fallback.
+    const KNOBS = new Set(['--cred', '--dash', '--sal', '--tilt']);
+    const undeclared = new Set<string>();
+    for (const { f, css } of sheets) {
+      for (const m of css.matchAll(/var\(\s*(--[\w-]+)\s*,/g)) {
+        if (!tokens.has(m[1]) && !RUNTIME.has(m[1]) && !KNOBS.has(m[1])) undeclared.add(`${f.slice(SRC.length + 1)} — ${m[1]}`);
+      }
+    }
+    expect([...undeclared].sort()).toEqual([]);
+  });
+
   it('holds across every stylesheet under src/, in a .css file or inside a component', () => {
     const doubled: string[] = [];
     for (const { f, css } of sheets) {
