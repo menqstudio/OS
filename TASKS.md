@@ -4,11 +4,11 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `17fa94f`.** PR #381 on `docs/mirror-seen` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `e3fc507`.** PR #383 on `audit/eleventh-round` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: commission the next independent audit.
+> **Next:** fix K-03 (T-170), then withdraw the self-test grant (K-05).
 >
-> **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
+> **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
 **Claim a row before you touch anything — never two on one.**
@@ -19,6 +19,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (682 fixed, 87 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370 (74 closed, 1 half, 1 partly refuted, 1 already covered — each marked in the record), where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
+| **T-169** | **The owner-command path** — [design](docs/design/OWNER_COMMAND_PATH_DESIGN.md) **REJECTED** in [review](docs/design/OWNER_COMMAND_PATH_REVIEW.md); redesign: sign the whole command, separate custody | — | Todo | — |
+| **T-170** | **The eleventh audit's findings** — `K-01`–`K-10` in the [ledger](apps/desktop/AUDIT/AUDIT_LEDGER.md), all open; `K-03` first, `K-07` needs an audited engine PR | — | Todo | — |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |

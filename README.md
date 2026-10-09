@@ -364,22 +364,20 @@ onto existing code.
 
 ### Ինչ դեռ հաստատված չի · What is not confirmed
 
-**HY:** Գործող անկախ վճիռը **RED** ա — տասներորդ ռաունդը, `main` @ `75fca65`, P0 չկա։
-Այդ ծայրից ի վեր, չափված 2026-10-01-ին `main` @ `73e5ccb`-ի վրա, **60 pull request**,
-**172 ֆայլ** ու **21 997 ավելացված տող** են merge եղել, ու դրանցից **ոչ մեկը անկախ հաստատված
-չի**։ Թիվը աճում ա ամեն merge-ի հետ — վազեցրու ներքևի հրամանները։ Արձակի ամեն ✅ ստուգիր
+**HY:** Գործող անկախ վճիռը **RED** ա — տասնմեկերորդ ռաունդը, `main` @ `e3fc507`, P0 չկա, չորս P1։
+Այդ ծայրից հետո merge եղած ամեն ինչ **անկախ հաստատված չի**. թե ինչքան ա՝ տպում են ներքևի
+հրամանները։ Արձակի ամեն ✅ ստուգիր
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md)-ի դեմ, նախքան
 հավատալը։
 
-**EN:** The standing independent verdict is **RED** — the TENTH round, `main` @ `75fca65`,
-no P0. Since that head — measured on 2026-10-01 at `main` @ `73e5ccb` — **60 pull requests**,
-**172 files** and **21,997 inserted lines** have merged, and **none of it is independently
-confirmed**. The figure grows with every merge; the two commands below print today's. Check any tick in prose against
+**EN:** The standing independent verdict is **RED** — the ELEVENTH round, `main` @ `e3fc507`,
+no P0, four P1. Nothing merged after that head is **independently
+confirmed**; the two commands below print how much that is today. Check any tick in prose against
 [`apps/desktop/AUDIT/AUDIT_LEDGER.md`](./apps/desktop/AUDIT/AUDIT_LEDGER.md) before believing
 it.
 
-    git log --format=%s 75fca65..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l   # 60 at 73e5ccb
-    git diff --shortstat 75fca65..HEAD    # at 73e5ccb: 172 files changed, 21997 insertions(+), 2109 deletions(-)
+    git log --format=%s e3fc507..HEAD | grep -oE "\(#[0-9]+\)$" | sort -u | wc -l
+    git diff --shortstat e3fc507..HEAD
 
 **HY:** Այս ֆայլի ամեն թիվ գոնե մեկ անգամ սխալ ա եղել։ Ամեն մեկը ինչ էր գրում ու ո՞ր
 հրամանն ա ուղղել — գրանցված ա

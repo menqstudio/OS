@@ -47,9 +47,9 @@ Do it FIRST, no exceptions — then you are ready and need no further explanatio
 > Opening the gate needs an independent audit **and** the Owner's approval — not a green CI run,
 > not a builder's confidence.
 >
-> **⚠ The standing independent-audit verdict is RED.** Ten rounds have run; the current one is the
-> tenth, [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
-> — RED, no P0. The second round left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3). Read the
+> **⚠ The standing independent-audit verdict is RED.** Eleven rounds have run; the current one is the
+> eleventh, [`2026-10-09-eleventh-audit-e3fc507.md`](./apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md)
+> — RED, no P0, four P1. The second round left **45 surviving findings** (1 P0, 5 P1, 13 P2, 26 P3). Read the
 > ledger before believing any ✅ in these documents; ◑ there means *the Builder's unverified claim*.
 > This paragraph said "two independent audits have run ... never re-run" through eight further
 > rounds — the round count belongs to the ledger, and this line is only a pointer to it.

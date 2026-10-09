@@ -8,61 +8,36 @@
 > status it cannot back — anything not individually re-verified is marked so, with the independent audit
 > as the live source of truth for current-code behaviour.
 
-**Authoritative current assessment:** [`2026-09-19-tenth-audit-75fca65.md`](./2026-09-19-tenth-audit-75fca65.md)
-— the **TENTH** independent audit, of `main` @ `75fca65`. **Verdict: RED, and no P0** — and the
-reason is now three named items rather than thirteen unconfirmed claims: `A-06` (a report that cannot
-be recovered), `A-09` route 1 (open **by declaration**, with an enumeration in place of a heuristic),
-and three documentation counts corrected in the change that filed the report. Nothing in this ledger
-forbids building the approval-**request** path; the tenth round says so in writing.
+**Authoritative current assessment:** [`2026-10-09-eleventh-audit-e3fc507.md`](./2026-10-09-eleventh-audit-e3fc507.md)
+— the **ELEVENTH** independent audit, of `main` @ `e3fc507`, range `75fca65..e3fc507`. **Verdict:
+RED, and no P0**: four P1, five P2, one P3. All three production-gate refusals were read in the code
+and confirmed. The same auditor reviewed the `T-169` design and **rejected** it:
+[`OWNER_COMMAND_PATH_REVIEW.md`](../../../docs/design/OWNER_COMMAND_PATH_REVIEW.md).
 
-The ninth round's own paragraph, kept because a superseded assessment is not a deleted one:
-[`2026-08-19-ninth-audit-5cf9b8c.md`](./2026-08-19-ninth-audit-5cf9b8c.md)
-— the **NINTH** independent audit, of `main` @ `5cf9b8c` (tree `9580b86d`, pin proven). **Verdict:
-RED, and no P0** — all three production-gate refusals read at that head and verified closed for the
-fourth round running, with `AnswerProvenance::Governed` confirmed constructed only inside
-`#[cfg(test)]` and nothing in the tree setting `$BROPS_BROKER_CONFIG`.
+**Who audited.** OpenAI Codex CLI 0.151.0, model `gpt-5.6-sol`, commissioned by the Owner — a
+different vendor and a different model from the Builder. The brief was written by the Builder and
+approved by the Owner. During the run the Builder changed two things in the audit clone's environment
+and nothing in its code: `npm ci`, and the clone's `origin` URL (a local path there made sixteen
+engine tests error). The run took about thirteen minutes, and the report's own last section names
+what it did not read.
 
-> ## THE TENTH ROUND: TWELVE ✅, ONE REOPENED, THREE FILED
->
-> Every one of the ninth round's thirteen was attacked **differently from the way its own fix
-> describes** — re-running a Builder's own mutant confirms their arithmetic, not the finding — and
-> where a row is a statement about file content it was read at `75fca65`. **Twelve earned ✅. One is
-> REOPENED**, and it is a documentation count: `I-10`, whose gate numbers are stale for the third
-> consecutive round. Nothing in the thirteen that touches a control, a gate or a trust boundary was
-> found overstated.
->
-> **Two of the confirmations are worth reading as attacks rather than as ticks.** `I-01`'s fix computes
-> the credential register from each leaf's real validator, but computes it over a hand-written list of
-> caller-controlled paths — so the probe added a leaf (`operator_hint`) to the wire frame, and **five
-> tests died by name**, including `the frame is exactly its declared fields`. `I-02`'s fix claims an
-> inverse assertion; the probe dropped a declared leaf out of the **production** frame builder rather
-> than out of the fixture, and **ten of nineteen** went red. A test that only fails when you edit the
-> test proves nothing.
->
-> **Three filed.** `J-01` the architecture CI cell, stale in five places at once. `J-03` **the roadmap
-> was in no gate's read set** — the document that decides which phase a session may work, whose 84
-> checked boxes are this repository's central claim about what is finished, checked by nothing; every
-> citation in it resolved when the gate was first pointed at it, which is the finding, because nothing
-> kept it that way. `J-04` this ledger listed `G-05` as open while its own archive marks it ✅.
-> **One withdrawn before filing** (`J-02`): drafted against `I-11` leaving `Decision.status` a `string`
-> with no SQL `CHECK`, withdrawn on reading that both are stated decisions with a reason. A withdrawn
-> finding is evidence the round read the answers and not only the code.
->
-> **What the round does not say:** that the trust boundary is proven. No governed round trip runs on a
-> default deployment, and phases 1, 2, 8 and 9 each hold Definition-of-Done rows open for stated
-> reasons. Phase 1's is a **wiring** gap, not missing code: the §4.10(f) hop is in
-> `broker/src/ladder_executor.rs`, and the row is open because `build_governed_executor` serves
-> `UpstreamBlockedExecutor` without `$BROPS_BROKER_CONFIG`.
+The tenth round, superseded: [`2026-09-19-tenth-audit-75fca65.md`](./2026-09-19-tenth-audit-75fca65.md) — `main` @ `75fca65`, RED, no P0. Its narrative and
+`J-01`–`J-04` are in [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md) under *Round 10*; the
+ninth is there under *Round 9*.
 
-> ## THE NINTH ROUND — superseded, and its narrative is in the archive
+> ## THE ELEVENTH ROUND: TEN FILED, NONE CLOSED
 >
-> Nine Builder claims landed in PRs #153–#162 and the round decided them: **six ✅, two REOPENED, one
-> held at ◑ on evidence no head can settle.** It then filed thirteen findings of its own, which the
-> tenth round re-attacked — twelve confirmed, `I-10` reopened. The full narrative and all thirteen
-> rows, each carrying the tenth round's verdict, are in
-> [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md) under *Round 9*. They moved for the reason
-> this file has a byte ceiling: it is read at the start of every session, and a round that has been
-> answered is history.
+> The gate is shut and the round confirms it. What it found is **behind** the gate and beside it:
+> `K-01` and `K-02` make the governed path fail the day refusal 3 is cleared, `K-03` is **reachable
+> today** by any user who types a non-ASCII unit into an automation trigger, and `K-05` is the
+> Builder's own `#378`, which granted the window a command that runs a shell on Windows and called
+> it a read. **Nothing below is fixed in the change that files this report.**
+>
+> **What the Builder measured beside it (◑, not the auditor's).** In the same clone at `e3fc507`,
+> outside the auditor's sandbox: engine **2741 OK** (17 skipped), `cargo test --workspace
+> --no-fail-fast` **1432 passed, 0 failed**, frontend **1153 of 1153**. The auditor's own runs
+> could not finish clean — its sandbox refuses `AF_UNIX` bind — which is `K-10`, and its point
+> stands: the counted claim names no environment.
 
 ## How to read the status column
 
@@ -78,23 +53,22 @@ The distinction is not bureaucratic. Both RED verdicts came from rows marked ✅
 that wrote the fix, and in the worst case (F-02) the ✅ was written while the defect was still
 live on the only platform where the Owner had ever been shown a `production_verified=true`.
 
-## Promotions decided by the NINTH independent audit — in the archive
+## The eleventh round's own findings
 
-Thirteen findings, `I-01`–`I-13`, each with the Builder's response and the tenth round's verdict beside
-it: [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md), *Round 9*. **Twelve ✅, one REOPENED**
-(`I-10`, a gate count stale for a third round, corrected in the change that filed the tenth report).
-
-## The tenth round's own findings
-
-Filed at `75fca65`, and each corrected in the change that carries the report unless the row says
-otherwise.
+Filed at `e3fc507`. Every row is **open**; the report has the reproduction and the fix for each.
 
 | # | P | Finding | Status |
 |---|---|---|---|
-| `J-01` | P2 | **`docs/ARCHITECTURE.md`'s CI cell was stale in five places at once**, in both language halves: 7 workflows against **8**; 33 checks per pull request against **37** reported on `#252`; 22 gates under `tools/` against **39** invoked; 23 files against **40**; 33 required against **34**; and *"exactly two"* excluded pull-request jobs against **four**. The cell's own parenthetical said the check count *"is not re-measured here"* — honest, and how it went four further rounds unmeasured. | ◑ Corrected in this change, both halves |
-| `J-02` | — | **Withdrawn before filing.** Drafted as *"`I-11`'s fix left the type and the column open"*: `status: string` appears six times in `entities.ts` and `0002_decisions.sql` has no `CHECK`. Both are stated decisions with a reason — the value is read from a ledger this app does not own — and the test says so. | Withdrawn |
-| `J-03` | P2 | **The roadmap was in no gate's read set.** `docs/roadmap/phase-*.md` is what `tools/check_roadmap_order.py` reads to decide which phase a session may work, and its **84** checked boxes across phases 1–9 are this repository's central claim about what is finished. It was in neither the canonical read manifest nor `ALSO_CHECKED`. Pointing the gate at all eleven files reported **nothing** beyond the two known `config/toolchain.json` lines: every path, hash and ticket it cites resolves. That is the finding — the referents were sound and nothing kept them sound. | ◑ Closed in this change: eleven files in `ALSO_CHECKED`, a test that the named set equals the set on disk, and a test that a dead path inside a phase file is caught |
-| `J-04` | P3 | **This ledger listed a closed finding as open.** `G-05` sat in *"Still open in the earlier rounds"* — a table whose own words are *"the open ones"* — while the archive marks it ✅ with its attack. | ◑ Corrected in this change |
+| `K-01` | P1 | **A verified output can be committed and then be undeliverable**: the contract admits 8,388,608 bytes, the broker's reply frame 8,192. | 🔴 Open |
+| `K-02` | P1 | **A governed conversation blocks after its first reply**: the desktop stores role `agent`, the broker accepts `user`/`assistant`/`system`, and the passing fixture hand-inserts `assistant`. | 🔴 Open |
+| `K-03` | P1 | **A non-ASCII automation trigger panics the scheduler while it holds the database mutex** — `parse_interval_ms` splits on a byte index. Reachable today. | 🔴 Open |
+| `K-04` | P1 | **Native approval text can be forged by the payload being approved**: control and bidi characters reach the trusted dialog. | 🔴 Open |
+| `K-05` | P2 | **`#378` granted a shell-running, unbounded command as tier R** — the trust self-test, on Windows with `BROPS_SELFTEST_MODEL_CMD` set. | 🔴 Open |
+| `K-06` | P2 | **The automation delete prompt is text-spoofable and checks less than it shows** (`enabled` is displayed, not compared). | 🔴 Open |
+| `K-07` | P2 | **Signer store corruption raises instead of refusing** — OWNER item 5, now with a reproduction. Signs nothing. | 🔴 Open, engine security code |
+| `K-08` | P2 | **A failed run step does not fail the run**; the next pending step stays claimable. | 🔴 Open |
+| `K-09` | P2 | **Release CI builds POSIX packages whose first launch cannot provision** — only the `.deb` carries the installer. | 🔴 Open |
+| `K-10` | P3 | **The counted full-suite claim names no environment** and did not reproduce in the auditor's. | 🔴 Open |
 
 ## Still open in the earlier rounds
 
@@ -102,7 +76,6 @@ Carried forward from [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md), whi
 
 | # | Finding |
 |---|---|
-| ~~`G-05`~~ | **Closed, and it was listed here in error** — `AUDIT_LEDGER_ARCHIVE.md` marks it ✅ with the attack that closed it (`""` → RED, `None` → RED, `OPEN` → GREEN, all four `A-11` doors re-attacked). Removed by the tenth round as `J-04`: a table that says it holds the open ones must not argue with its own archive. |
 | `A-06` | The fifth audit's report was never filed; this ledger named the fourth as authoritative while the OWNER page carried the fifth's 15 promotions. |
 | `A-09` | Three routes get a credential past the no-lease / no-secret whitelists; the tests prove frame shape and word-absence, not credential-absence. |
 

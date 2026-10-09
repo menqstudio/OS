@@ -5,16 +5,16 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `17fa94f`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `e3fc507`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `17fa94f`.** PR #381 on `docs/mirror-seen` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `e3fc507`.** PR #383 on `audit/eleventh-round` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** Owner: commission the next independent audit.
+> **Next:** fix K-03 (T-170), then withdraw the self-test grant (K-05).
 >
-> **Standing verdict: RED** -- the TENTH round, `apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
+> **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
 
-**OWNER 2g, 2h:** dead cockpit controls; five of six refused commands granted; self-test on Linux. **T-145:** 74 closed.
+**OWNER 2g, 2h:** five of six commands granted; self-test on Linux. **T-169:** design REJECTED. **T-145:** 74 closed.
 
 **Next: T-020's FW-1 correction MERGED as `#219` (`2a50081`) and is NOT approved.** B1-B7 and C1, C2,
 C4, C6, C7 are done and measured — the full account and the B/C list live only in `#219`'s body;
@@ -76,11 +76,10 @@ inputs is absent (all are); `connect_broker()` refuses off Linux; and the broker
 verifies under the floor-pinned root anchor — nothing shipped sets it, and then it commits only
 `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false`.
 
-**The standing independent verdict is RED.** TEN rounds; the current one is
-[`2026-09-19-tenth-audit-75fca65.md`](apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md)
-— RED, no P0, and the reason is three named items rather than unconfirmed claims.
-**122 pull requests, 910 files and 107,086 inserted lines have merged since that head**, and
-none of it is independently confirmed. Every mark added since is ◑. *(Measured `75fca65..main` at `487793e`, 2026-10-09; this said 31 / 121 / 10,599 for seventeen days.)*
+**The standing independent verdict is RED.** ELEVEN rounds; the current one is
+[`2026-10-09-eleventh-audit-e3fc507.md`](apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md)
+— no P0, four P1 (`K-01`–`K-04`), all open; `K-03` breaks the app today. Read `e3fc507`;
+everything merged after it is ◑.
 
 **Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:
 commissioning the next independent audit — 93 pull requests are unaudited — and the Windows tools job,

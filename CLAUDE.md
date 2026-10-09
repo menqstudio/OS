@@ -113,7 +113,7 @@ The engine is a **security perimeter**. Any change to its wall, leases, gates, s
 2. `connect_broker()` returns `UnsupportedPlatform` **off Linux**
 3. the broker serves `UpstreamBlockedExecutor` **unless `$BROPS_BROKER_CONFIG` names a deployment whose manifest verifies under the floor-pinned root anchor** — which nothing in the shipped app sets; then it commits only `demonstration_custody` while `INSTALL_MINTED_CUSTODY_ACCEPTED` is `false` — the Owner's line
 
-**The standing independent verdict is RED.** TEN rounds; the current one is [`2026-09-19-tenth-audit-75fca65.md`](./apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md) — RED, no P0, and its reason is three named items rather than unconfirmed claims. The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3).
+**The standing independent verdict is RED.** ELEVEN rounds; the current one is [`2026-10-09-eleventh-audit-e3fc507.md`](./apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md) — RED, no P0, four P1; `K-03` is reachable today. The second round left **45** surviving findings (1 P0 · 5 P1 · 13 P2 · 26 P3).
 
 **O-1…O-5 are all OPEN and none needs an Owner-minted artifact.** Inventory: [`docs/PHASE_10_PRODUCTION_ITEMS.md`](./docs/PHASE_10_PRODUCTION_ITEMS.md). What blocks them is deployment wiring and a second principal. Severities, which `tools/check_residual_items.py` holds identical here, in `docs/SECURITY_MODEL.md` §4 and in the inventory — a severity quietly downgraded in one document is how a production item stops being one: **O-1 (HIGH)** bytecode-shadow, the *read* half — CPython imports an existing `.pyc` before any Python check can run · **O-2 (MED)** audit-head anchor · **O-3 (MED)** conductor session token, fail-closed and set, open until a desktop turn reaches it · **O-4 (LOW)** control-room actor — nothing outside tests mints the artifact `_prove_command_actor` would verify · **O-5 (LOW)** evidence high-water, open deliberately: *when* it is minted is an unanswered design question. The one to know:
 
@@ -166,7 +166,7 @@ Engine-ը **security perimeter** ա. իր wall-ի, lease-ների, ստորագ�
 
 **Production դարպասը ՓԱԿ ա** ու բացում ա միայն Owner-ը՝ անկախ աուդիտից հետո։ Երեք մերժում ա պահում (տես անգլերեն §6)։ `platform_governed_execution_supported()` անունով ֆունկցիա **ծառում չկա** — դա §0.1-ի spec-ի նշանն ա։
 
-**Գործող անկախ վճիռը RED ա** — տասներորդ ռաունդ, P0 չկա։ Երկրորդ ռաունդը թողել ա **45** գտածո (1 P0 · 5 P1 · 13 P2 · 26 P3)։
+**Գործող անկախ վճիռը RED ա** — տասնմեկերորդ ռաունդ, P0 չկա, 4 P1։ Երկրորդ ռաունդը թողել ա **45** գտածո (1 P0 · 5 P1 · 13 P2 · 26 P3)։
 
 **O-1…O-5 բոլորը OPEN են ու ոչ մեկին Owner-ի artifact պետք չի։** Ծանրությունները՝ **O-1 (HIGH)** · **O-2 (MED)** · **O-3 (MED)** · **O-4 (LOW)** · **O-5 (LOW)**, ու `tools/check_residual_items.py`-ն պահում ա որ նույնը գրած լինի նաև `docs/SECURITY_MODEL.md` §4-ում ու inventory-ում։ Ամենակարևորը՝ **O-2. audit ledger-ը իր սեփական գրողի դեմ tamper-evident չի ոչ մի իրական deployment-ի վրա** — shipped արտադրանքում ոչինչ չի դնում custody-ի փոփոխականները, signer-ի binary չի տեղադրվում, ու `append()`-ը գրում ա պարզ տեքստով `.head` առանց ստորագրության։ POSIX-ում **երբեք չի վազել**։
 

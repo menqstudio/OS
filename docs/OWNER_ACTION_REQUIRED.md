@@ -60,16 +60,11 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > `ArtifactStore.read_verified` into the refusal the design names. Small, and not to be done
 > without the audit: it changes what the signer answers on its trust boundary.
 >
-> **6. The NEXT independent audit — its scope, measured, so it can start.** The tenth round
-> read `main` at `75fca65`. Since then, measured `75fca65..main` at `487793e` on 2026-10-09:
-> **122** squash-merged pull requests (`#253`–`#375`), **910** files, **107,086** inserted lines —
-> the canon said 31 / 121 / 10,599 until 2026-10-08, and 93 / 886 / 104,780 at `a90ca90`. Where the security weight is: `engine/runtime` and
-> `engine/tools` **48** files (+2,961 / −958); `apps/desktop/src-tauri` **113** files
-> (+16,514 / −2,828); `bridge` **12** files. Read first, because each reached `main` on an Owner
-> waiver with no Architect audit: `#313`, `#314`, `#321` (roadmap §G.2 names them). Then: `T-020`
-> (`#219`, the floor writer — C3 and a second pass were never done), `T-021a`–`d` (`#254`–`#257`),
-> and finding 5 above. **Recommended: commission it before any new build work** — every row marked
-> ◑ since `75fca65` waits on it, and Phase 1 cannot close without it. A Builder cannot do this one:
+> **6. The independent audit — DONE 2026-10-09, the eleventh round.** It read `75fca65..e3fc507`
+> (128 commits, 916 files, 107,396 inserted lines) and returned RED; the banner below and the
+> ledger carry it. Everything merged after `e3fc507` is ◑ again. **Recommended: commission a second
+> pass limited to `engine/runtime` and `apps/desktop/src-tauri`, line by line** — this round ran
+> for about thirteen minutes and names what it did not read. A Builder cannot do this one:
 > a session auditing what it wrote is not independent.
 >
 > **Also recorded, because it existed nowhere else:** a `git stash` on this machine held one
@@ -206,6 +201,27 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > enumerated surface, not a heuristic), `T-023` (one green run of an intermittent job is not
 > evidence), and `T-040` (a load-only flake, measured and unpatched, with the decisive experiment
 > named in order and `--retry` ruled out).
+
+> **ELEVENTH AUDIT, 2026-10-09 — RED, on `main` @ `e3fc507`.** Filed at
+> [`2026-10-09-eleventh-audit-e3fc507.md`](../apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md).
+> **No P0. Four P1, five P2, one P3** (`K-01`–`K-10`), all open. The three production-gate refusals
+> are confirmed in the code. The auditor was OpenAI Codex, commissioned by you — another vendor's
+> model; who wrote the brief and what the Builder touched during the run is in the ledger.
+>
+> **One finding breaks the app for a real user today:** `K-03` — an automation trigger such as
+> `every: 5м` panics the scheduler while it holds the only database lock, and every later database
+> command is refused. **One is the Builder's own:** `K-05` — the self-test granted to the window in
+> `#378` as a read runs a shell command on Windows when `BROPS_SELFTEST_MODEL_CMD` is set.
+>
+> **The owner-command design (`T-169`) is REJECTED**, in
+> [`OWNER_COMMAND_PATH_REVIEW.md`](design/OWNER_COMMAND_PATH_REVIEW.md): the dialog would confirm
+> one document and the key would sign a smaller one, and one account would hold the key, the state
+> and the verifier. Decisions D1 and D2 are overruled.
+>
+> **Recommended, in this order:** fix `K-03` first (not security code, reachable today); withdraw
+> the self-test grant until its model seam is split out (`K-05`); redesign `T-169` around a fully
+> signed command and a separate principal; take `K-01`, `K-02` and `K-04` before anything clears
+> refusal 3. `K-07` is engine security code and waits for its own audited pull request.
 
 > **TENTH AUDIT, 2026-09-19 — RED, on `main` @ `75fca65`.** Filed at
 > [`2026-09-19-tenth-audit-75fca65.md`](../apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md).
@@ -1304,6 +1320,8 @@ one owner command end to end and watch a row appear.
 Two smaller things from the same run. The package installs neither `engine/` nor `bridge/`, so an
 installed application has no sidecar unless it is pointed at a checkout. And a READ created a
 `tasks/` directory inside the empty state directory: a read path that writes.
+
+**The design is written (2026-10-09): [`docs/design/OWNER_COMMAND_PATH_DESIGN.md`](design/OWNER_COMMAND_PATH_DESIGN.md), `T-169`.** It is a proposal and nothing in it is built. It is addressed to an independent auditor and asks to be broken: section 2 states what the tree does today and names five contradictions found while reading it, section 5 is thirty-nine attacks with eight marked OPEN, section 6 is where the Builder thinks it is weakest, and section 8 is six decisions. **The verdict came back the same day: REJECTED** — [`OWNER_COMMAND_PATH_REVIEW.md`](design/OWNER_COMMAND_PATH_REVIEW.md). All five contradictions were confirmed; eight of the thirty-nine rows were ruled false and twelve attacks were missing. Nothing is built from it. **Recommended: redesign around one canonical, fully signed command and a separate OS principal for the engine, then send that back for review.**
 
 **Recommendation: design the shipped caller before deploying anything.** One owner command — the
 cockpit signs a `control-room-command` with the retained `control-room` key

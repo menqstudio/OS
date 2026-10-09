@@ -934,6 +934,56 @@ pinned tree, with every mutation restored byte-exact.
 | `I-12` | P3 | **`check_bundle_budget.py` has no freshness check.** It reported GREEN at 151.6 KB against a `dist/` built before T-033's deletion, and GREEN at 133.0 KB after a rebuild of the same tree. T-033 cites this gate as evidence for a bundle-size claim. | ✅ **Confirmed by the tenth round, 75fca65** · ◑ **Builder-claimed fixed 2026-08-29** — the gate refuses to grade a build older than the tree: any bundled source newer than the manifest is RED, naming the file, and the size verdict is not printed beside it. Test files and `.md` are excluded (a gate that reds on a touched test gets switched off). Five tests; mutant: disable the freshness check ⇒ **3 red** |
 | `I-13` | P2 | **Two Phase-10 boxes are closable by a Builder change**, against the claim that every open box is blocked by the production gate or deployment: `contracts/` finalisation (roadmap `L1738`, `L1747`). `contracts/` is a lone 3 012-byte README while `engine/schemas/` holds 21 schemas; `ARCHITECTURE.md` says so itself. No service principal, launcher, broker or deployment is involved. | ✅ **Confirmed by the tenth round, 75fca65** · ◑ **Builder-claimed fixed 2026-08-29, except the relocation** — `contracts/` holds the five cross-half schemas as the **source**, `contracts/index.json` carries each one's version as a JSON Pointer into its own `const`, and `tools/check_contracts_single_source.py` (17 tests, wired into CI) fails on drift between source and vendored copy, on an unclassified new engine schema, on a version bumped in one place, and on any `*.schema.json` outside the four declared homes. What is left is the file move, and the reason is written down rather than filed under a blocker it does not have: the engine resolves schema paths relative to its **own root** and `engine/` is a subtree of `menqstudio/Bro`. **The audit is right that no production gate, service principal, launcher, broker or deployment is involved** |
 
+## Round 10 (2026-09-19, `main` @ `75fca65`) — superseded by the eleventh round
+
+Moved out of [`AUDIT_LEDGER.md`](./AUDIT_LEDGER.md) on 2026-10-09 when the eleventh round landed, unsummarised.
+
+> ## THE TENTH ROUND: TWELVE ✅, ONE REOPENED, THREE FILED
+>
+> Every one of the ninth round's thirteen was attacked **differently from the way its own fix
+> describes** — re-running a Builder's own mutant confirms their arithmetic, not the finding — and
+> where a row is a statement about file content it was read at `75fca65`. **Twelve earned ✅. One is
+> REOPENED**, and it is a documentation count: `I-10`, whose gate numbers are stale for the third
+> consecutive round. Nothing in the thirteen that touches a control, a gate or a trust boundary was
+> found overstated.
+>
+> **Two of the confirmations are worth reading as attacks rather than as ticks.** `I-01`'s fix computes
+> the credential register from each leaf's real validator, but computes it over a hand-written list of
+> caller-controlled paths — so the probe added a leaf (`operator_hint`) to the wire frame, and **five
+> tests died by name**, including `the frame is exactly its declared fields`. `I-02`'s fix claims an
+> inverse assertion; the probe dropped a declared leaf out of the **production** frame builder rather
+> than out of the fixture, and **ten of nineteen** went red. A test that only fails when you edit the
+> test proves nothing.
+>
+> **Three filed.** `J-01` the architecture CI cell, stale in five places at once. `J-03` **the roadmap
+> was in no gate's read set** — the document that decides which phase a session may work, whose 84
+> checked boxes are this repository's central claim about what is finished, checked by nothing; every
+> citation in it resolved when the gate was first pointed at it, which is the finding, because nothing
+> kept it that way. `J-04` this ledger listed `G-05` as open while its own archive marks it ✅.
+> **One withdrawn before filing** (`J-02`): drafted against `I-11` leaving `Decision.status` a `string`
+> with no SQL `CHECK`, withdrawn on reading that both are stated decisions with a reason. A withdrawn
+> finding is evidence the round read the answers and not only the code.
+>
+> **What the round does not say:** that the trust boundary is proven. No governed round trip runs on a
+> default deployment, and phases 1, 2, 8 and 9 each hold Definition-of-Done rows open for stated
+> reasons. Phase 1's is a **wiring** gap, not missing code: the §4.10(f) hop is in
+> `broker/src/ladder_executor.rs`, and the row is open because `build_governed_executor` serves
+> `UpstreamBlockedExecutor` without `$BROPS_BROKER_CONFIG`.
+
+## The tenth round's own findings
+
+Filed at `75fca65`, and each corrected in the change that carries the report unless the row says
+otherwise.
+
+| # | P | Finding | Status |
+|---|---|---|---|
+| `J-01` | P2 | **`docs/ARCHITECTURE.md`'s CI cell was stale in five places at once**, in both language halves: 7 workflows against **8**; 33 checks per pull request against **37** reported on `#252`; 22 gates under `tools/` against **39** invoked; 23 files against **40**; 33 required against **34**; and *"exactly two"* excluded pull-request jobs against **four**. The cell's own parenthetical said the check count *"is not re-measured here"* — honest, and how it went four further rounds unmeasured. | ◑ Corrected in this change, both halves |
+| `J-02` | — | **Withdrawn before filing.** Drafted as *"`I-11`'s fix left the type and the column open"*: `status: string` appears six times in `entities.ts` and `0002_decisions.sql` has no `CHECK`. Both are stated decisions with a reason — the value is read from a ledger this app does not own — and the test says so. | Withdrawn |
+| `J-03` | P2 | **The roadmap was in no gate's read set.** `docs/roadmap/phase-*.md` is what `tools/check_roadmap_order.py` reads to decide which phase a session may work, and its **84** checked boxes across phases 1–9 are this repository's central claim about what is finished. It was in neither the canonical read manifest nor `ALSO_CHECKED`. Pointing the gate at all eleven files reported **nothing** beyond the two known `config/toolchain.json` lines: every path, hash and ticket it cites resolves. That is the finding — the referents were sound and nothing kept them sound. | ◑ Closed in this change: eleven files in `ALSO_CHECKED`, a test that the named set equals the set on disk, and a test that a dead path inside a phase file is caught |
+| `J-04` | P3 | **This ledger listed a closed finding as open.** `G-05` sat in *"Still open in the earlier rounds"* — a table whose own words are *"the open ones"* — while the archive marks it ✅ with its attack. | ◑ Corrected in this change |
+
+`G-05` was struck from the open list by this round (`J-04`).
+
 ## Legend
 **One legend, and it is the one under “How to read the status column” above:** ✅ = an independent
 audit confirmed it · ◑ = the Builder's claim, nobody else has looked · 🔴 / ⚠️ = open · by-design =
