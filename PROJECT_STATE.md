@@ -56,9 +56,8 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 
 ## Standing risks
 
-**RED is the independent verdict** — the TENTH round, `main` at `75fca65`, no P0. **122 pull
-requests, 910 files and 107,086 inserted lines** have merged since, none independently
-confirmed — measured `75fca65..main` at `487793e` on 2026-10-09, PRs `#253`–`#375`.
+**RED is the independent verdict** — the ELEVENTH round, `main` at `e3fc507`, no P0, four P1
+(`K-01`–`K-10` open in the ledger). Everything merged after that head is ◑.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
@@ -75,8 +74,8 @@ All 35 contexts in `config/required-checks.json` are required on `main`, with `s
 `enforce_admins`; `check_repo_state.py` is GREEN. Private from 2026-10-05 it had none (`T-168`):
 on this plan a private repository carries no protection, and going private deletes the rules.
 
-**The `.deb` was installed here on 2026-10-09** and first launch runs. The mirrors are
-granted since and the self-test runs on Linux; the governed turn is refused (OWNER 2h).
+**The `.deb` was installed here 2026-10-09** and runs: mirrors granted, self-test on Linux,
+governed turn refused (OWNER 2h). `T-169`'s owner-command design was REJECTED.
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.
