@@ -1305,6 +1305,8 @@ Two smaller things from the same run. The package installs neither `engine/` nor
 installed application has no sidecar unless it is pointed at a checkout. And a READ created a
 `tasks/` directory inside the empty state directory: a read path that writes.
 
+**The design is written (2026-10-09): [`docs/design/OWNER_COMMAND_PATH_DESIGN.md`](design/OWNER_COMMAND_PATH_DESIGN.md), `T-169`.** It is a proposal and nothing in it is built. It is addressed to an independent auditor and asks to be broken: section 2 states what the tree does today and names five contradictions found while reading it, section 5 is thirty-nine attacks with eight marked OPEN, section 6 is where the Builder thinks it is weakest, and section 8 is six decisions. **Yours to do: hand it to the auditor together with the code-audit scope in item 6 above.** No code follows until a verdict comes back.
+
 **Recommendation: design the shipped caller before deploying anything.** One owner command — the
 cockpit signs a `control-room-command` with the retained `control-room` key
 (`provision::mint_control_room_command` exists and is called by nothing), the sidecar carries it,
