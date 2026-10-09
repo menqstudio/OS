@@ -75,7 +75,7 @@ All 35 contexts in `config/required-checks.json` are required on `main`, with `s
 on this plan a private repository carries no protection, and going private deletes the rules.
 
 **The `.deb` was installed here 2026-10-09** and runs: mirrors granted, self-test on Linux,
-governed turn refused (OWNER 2h). `T-169`'s owner-command design was REJECTED.
+governed turn refused (OWNER 2h). `T-169`'s design was REJECTED. `tools/sync_facts.py` writes repeated facts.
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.

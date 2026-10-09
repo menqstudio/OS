@@ -960,6 +960,12 @@ jobs:
       # machine-checkable referent -- paths, commits, ticket ids, toolchain versions.
       - name: Canonical documents make no false checkable claim
         run: python tools/check_doc_claims.py
+      # check_doc_claims CHECKS a repeated fact; nothing WROTE one, so the standing audit round was
+      # changed by hand in nine files and current_state.json still said NINTH in two fields, two
+      # rounds stale. config/doc-facts.json gives each such fact one source; this is RED when a use
+      # has drifted from it, and `python tools/sync_facts.py --write` is the whole correction.
+      - name: Every repeated fact equals its one source
+        run: python tools/check_facts.py
       # An assumption may not enter the record dressed as a fact. Either settle it and write
       # what it printed, or mark it UNVERIFIED with the experiment that would settle it.
       - name: No unmarked guess in a canonical document
@@ -1001,6 +1007,7 @@ jobs:
           python -m unittest test_check_canon_budget
           python -m unittest test_check_handoff_ready
           python -m unittest test_check_doc_claims
+          python -m unittest test_sync_facts
           python -m unittest test_check_recommendation
           python -m unittest test_check_truncated_lines
           python -m unittest test_roadmap_split
