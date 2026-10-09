@@ -25,13 +25,13 @@ The tenth round, superseded: [`2026-09-19-tenth-audit-75fca65.md`](./2026-09-19-
 `J-01`–`J-04` are in [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md) under *Round 10*; the
 ninth is there under *Round 9*.
 
-> ## THE ELEVENTH ROUND: TEN FILED, NONE CLOSED
+> ## THE ELEVENTH ROUND: TEN FILED, ONE ANSWERED BY THE BUILDER
 >
 > The gate is shut and the round confirms it. What it found is **behind** the gate and beside it:
-> `K-01` and `K-02` make the governed path fail the day refusal 3 is cleared, `K-03` is **reachable
-> today** by any user who types a non-ASCII unit into an automation trigger, and `K-05` is the
+> `K-01` and `K-02` make the governed path fail the day refusal 3 is cleared, `K-03` was **reachable**
+> by any user who types a non-ASCII unit into an automation trigger (fixed since, ◑), and `K-05` is the
 > Builder's own `#378`, which granted the window a command that runs a shell on Windows and called
-> it a read. **Nothing below is fixed in the change that files this report.**
+> it a read. **Nothing was fixed in the change that filed the report.**
 >
 > **What the Builder measured beside it (◑, not the auditor's).** In the same clone at `e3fc507`,
 > outside the auditor's sandbox: engine **2741 OK** (17 skipped), `cargo test --workspace
@@ -55,13 +55,13 @@ live on the only platform where the Owner had ever been shown a `production_veri
 
 ## The eleventh round's own findings
 
-Filed at `e3fc507`. Every row is **open**; the report has the reproduction and the fix for each.
+Filed at `e3fc507`. Open unless the row says otherwise; the report has the reproduction and the fix for each.
 
 | # | P | Finding | Status |
 |---|---|---|---|
 | `K-01` | P1 | **A verified output can be committed and then be undeliverable**: the contract admits 8,388,608 bytes, the broker's reply frame 8,192. | 🔴 Open |
 | `K-02` | P1 | **A governed conversation blocks after its first reply**: the desktop stores role `agent`, the broker accepts `user`/`assistant`/`system`, and the passing fixture hand-inserts `assistant`. | 🔴 Open |
-| `K-03` | P1 | **A non-ASCII automation trigger panics the scheduler while it holds the database mutex** — `parse_interval_ms` splits on a byte index. Reachable today. | 🔴 Open |
+| `K-03` | P1 | **A non-ASCII automation trigger panics the scheduler while it holds the database mutex** — `parse_interval_ms` splits on a byte index. | ◑ Fixed after the round: the unit comes off by `strip_suffix`, an overflowing count is refused, and two tests panicked on the old parser first — one of them through `run_due` with the row enabled |
 | `K-04` | P1 | **Native approval text can be forged by the payload being approved**: control and bidi characters reach the trusted dialog. | 🔴 Open |
 | `K-05` | P2 | **`#378` granted a shell-running, unbounded command as tier R** — the trust self-test, on Windows with `BROPS_SELFTEST_MODEL_CMD` set. | 🔴 Open |
 | `K-06` | P2 | **The automation delete prompt is text-spoofable and checks less than it shows** (`enabled` is displayed, not compared). | 🔴 Open |
