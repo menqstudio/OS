@@ -208,7 +208,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > are confirmed in the code. The auditor was OpenAI Codex, commissioned by you — another vendor's
 > model; who wrote the brief and what the Builder touched during the run is in the ledger.
 >
-> **One finding breaks the app for a real user today:** `K-03` — an automation trigger such as
+> **One finding broke the app for a real user, and is fixed since (◑, the Builder's claim):** `K-03` — an automation trigger such as
 > `every: 5м` panics the scheduler while it holds the only database lock, and every later database
 > command is refused. **One is the Builder's own:** `K-05` — the self-test granted to the window in
 > `#378` as a read runs a shell command on Windows when `BROPS_SELFTEST_MODEL_CMD` is set.
@@ -218,7 +218,7 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > one document and the key would sign a smaller one, and one account would hold the key, the state
 > and the verifier. Decisions D1 and D2 are overruled.
 >
-> **Recommended, in this order:** fix `K-03` first (not security code, reachable today); withdraw
+> **Recommended, in this order:** ~~fix `K-03`~~ (done); withdraw
 > the self-test grant until its model seam is split out (`K-05`); redesign `T-169` around a fully
 > signed command and a separate principal; take `K-01`, `K-02` and `K-04` before anything clears
 > refusal 3. `K-07` is engine security code and waits for its own audited pull request.

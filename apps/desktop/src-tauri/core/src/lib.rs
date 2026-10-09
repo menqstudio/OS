@@ -642,6 +642,41 @@ mod tests {
         assert_eq!(repo::automations::parse_interval_ms("every: 0m"), None);
     }
 
+    // K-03 (eleventh audit): the unit was cut off at `len() - 1`, a BYTE index. A trigger whose
+    // last character is more than one byte put that index inside the character and `split_at`
+    // panicked — in the scheduler, which holds the only database mutex while it parses.
+    #[test]
+    fn a_trigger_that_is_not_ascii_is_unscheduled_and_never_a_panic() {
+        for trigger in [
+            "every: 5м", "every: 5ժ", "every: 1\u{202e}", "every: м", "every: 5 м", "every: ５m",
+            "every: 5m\u{301}", "every: 🙂", "EVERY: 5İ",
+        ] {
+            assert_eq!(repo::automations::parse_interval_ms(trigger), None, "{trigger:?}");
+        }
+        // The three units still parse, and a count too large for the result is refused
+        // rather than wrapped into a different interval.
+        assert_eq!(repo::automations::parse_interval_ms("every: 3d"), Some(259_200_000));
+        assert_eq!(repo::automations::parse_interval_ms(" Every: 5M "), Some(300_000));
+        assert_eq!(repo::automations::parse_interval_ms("every: 9223372036854775807d"), None);
+        assert_eq!(repo::automations::parse_interval_ms("every: 153722867280913m"), None);
+    }
+
+    // The same defect where it did its damage: an ENABLED row the scheduler meets on a tick.
+    // The tick must skip it, fire its neighbour, and return — a panic here poisons the mutex
+    // every other database command needs.
+    #[test]
+    fn the_scheduler_survives_an_enabled_automation_with_a_non_ascii_trigger() {
+        let c = conn();
+        let bad = repo::automations::create(&c, NewAutomation { name: "bad".into(), trigger: "every: 5м".into(), action: "notify: never".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &bad.id);
+        let good = repo::automations::create(&c, NewAutomation { name: "good".into(), trigger: "every: 1m".into(), action: "notify: tick".into() }, crate::repo::audit::Actor::local_operator()).unwrap();
+        arm(&c, &good.id);
+        let fired = repo::automations::run_due(&c, 1_700_000_000_000).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].automation_id, good.id);
+        assert_eq!(repo::automations::list_runs(&c, &bad.id).unwrap().len(), 0);
+    }
+
     // T-011: a pending approval carries its durable origin_principal, a one-time
     // nonce, and a request digest bound to the current entity state. Returns
     // (step_id, approval_id, nonce, request_digest).

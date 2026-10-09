@@ -2717,22 +2717,26 @@ pub mod automations {
     /// only run via an explicit "Run now". Keeping the vocabulary tiny + explicit keeps scheduling
     /// honest and predictable.
     pub fn parse_interval_ms(trigger: &str) -> Option<i64> {
-        let rest = trigger.trim().to_lowercase();
-        let rest = rest.strip_prefix("every:")?.trim().to_string();
-        if rest.len() < 2 {
+        // ASCII lowercasing only: the vocabulary is ASCII, and the unit is taken off by
+        // `strip_suffix`, never by a byte index. `rest.len() - 1` landed inside a multi-byte last
+        // character and `split_at` panicked under the scheduler's database mutex (K-03).
+        let rest = trigger.trim().to_ascii_lowercase();
+        let rest = rest.strip_prefix("every:")?.trim();
+        let (num, unit_ms): (&str, i64) = if let Some(n) = rest.strip_suffix('m') {
+            (n, 60_000)
+        } else if let Some(n) = rest.strip_suffix('h') {
+            (n, 3_600_000)
+        } else if let Some(n) = rest.strip_suffix('d') {
+            (n, 86_400_000)
+        } else {
             return None;
-        }
-        let (num, unit) = rest.split_at(rest.len() - 1);
+        };
         let n: i64 = num.trim().parse().ok()?;
         if n <= 0 {
             return None;
         }
-        match unit {
-            "m" => Some(n * 60_000),
-            "h" => Some(n * 3_600_000),
-            "d" => Some(n * 86_400_000),
-            _ => None,
-        }
+        // A count too large for the result is not an interval; wrapping would schedule another.
+        n.checked_mul(unit_ms)
     }
 
     /// The local scheduler tick: fire every ENABLED automation whose interval trigger is DUE (never
