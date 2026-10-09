@@ -57,5 +57,6 @@ second file.
 3. Run `--check` until it is GREEN; every refusal names the file and the reason.
 4. Run `--check` in CI. Copy `tools/check_facts.py` too if the repository has a gate loop.
 
-Verified on Linux. One guard — writing back with the file's own line endings — can only be seen
-failing on Windows; its read half is tested everywhere.
+Line endings: a CRLF checkout is worked on as LF and written back as CRLF, so a pattern written
+with `\n` matches on Windows; a file that mixes the two keeps every ending. The first Windows CI
+run found both that and a test fixture that doubled its own `\r`.

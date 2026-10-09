@@ -19,7 +19,9 @@ def tree(cfg, files):
     for rel, text in files.items():
         f = root / rel
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(text, encoding="utf-8")
+        # Bytes, not text mode: on Windows `write_text` turns every "\n" into "\r\n", so a fixture
+        # that already says "\r\n" arrived as "\r\r\n" and two tests failed on the fixture.
+        f.write_bytes(text.encode("utf-8"))
     return root
 
 
@@ -205,6 +207,25 @@ class Targets(unittest.TestCase):
         self.assertIn("names `nope`", run(root, "--check")[1])
         root = tree(self.CFG, {"s.json": self.JSON_TEXT})
         self.assertIn("target file C.md does not exist", run(root, "--check")[1])
+
+    def test_a_pattern_across_a_line_break_matches_a_crlf_checkout_and_the_file_keeps_its_endings(self):
+        cfg = {"facts": {"round": {"source": {"value": "eleventh"}}}, "documents": [],
+               "targets": [{"file": "S.md", "fact": "round", "pattern": r"current one is the\n> ([a-z]+),"}]}
+        for ending in ("\n", "\r\n"):
+            body = f"x{ending}> the current one is the{ending}> tenth, [link]{ending}end"
+            root = tree(cfg, {"S.md": body})
+            code, out = run(root, "--check")
+            self.assertEqual(code, 1, out)
+            self.assertIn("S.md:3: `round` says `tenth`", out)
+            self.assertEqual(run(root, "--write")[0], 0)
+            self.assertEqual((root / "S.md").read_bytes(), body.replace("tenth", "eleventh").encode())
+
+    def test_a_file_that_mixes_line_endings_keeps_every_one_of_them(self):
+        cfg = {"facts": {"n": {"source": {"value": "5"}}}, "documents": [],
+               "targets": [{"file": "M.md", "fact": "n", "pattern": r"count=(\d+)"}]}
+        root = tree(cfg, {"M.md": "a\r\nb\ncount=4\r\nc\n"})
+        self.assertEqual(run(root, "--write")[0], 0)
+        self.assertEqual((root / "M.md").read_bytes(), b"a\r\nb\ncount=5\r\nc\n")
 
     def test_markers_and_a_target_in_one_file_are_both_applied(self):
         cfg = {"facts": {"round": {"source": {"value": "eleventh"}}, "n": {"source": {"value": "5"}}},

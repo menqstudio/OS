@@ -166,6 +166,12 @@ def plan(root: pathlib.Path):
         # LF on the way back, and a one-word fix would arrive as a whole-file diff on Windows.
         with open(path, encoding="utf-8", newline="") as fh:
             text = fh.read()
+        # A checkout with CRLF endings is the same document. Work on LF so a pattern written with
+        # `\n` matches on Windows too, and give the file its own endings back on the way out. A
+        # file that mixes the two is worked on as it is, so no ending in it can change.
+        crlf = "\r\n" in text and text.count("\r\n") == text.count("\n")
+        if crlf:
+            text = text.replace("\r\n", "\n")
         stale = []
         if path in marked:
             out = []
@@ -212,7 +218,7 @@ def plan(root: pathlib.Path):
                 stale.append((text.count("\n", 0, m.start(1)) + 1, name, m.group(1), new))
                 text = text[:m.start(1)] + new + text[m.end(1):]
         if stale:
-            edits[path] = (text, stale)
+            edits[path] = (text.replace("\n", "\r\n") if crlf else text, stale)
 
     unused = sorted(set(values) - used)
     if unused:
