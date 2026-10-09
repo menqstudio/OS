@@ -5,11 +5,11 @@
 > `config/canon-budget.json` holds it to 8500 bytes; over that, the wall accepts only an edit that
 > shrinks it.
 
-**Active branch:** `main` — `main` @ `5d94f6f`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
+**Active branch:** `main` — `main` @ `1c72f8c`. A handoff names the merge base or `main`; a branch commit is a dead object after a squash. · **task** `floor-writer`
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `5d94f6f`.** PR #384 on `fix/k03-trigger-panic` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `1c72f8c`.** PR #385 on `fix/k05-selftest-runs-no-model` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** withdraw the self-test grant (K-05), then the T-169 redesign.
+> **Next:** the facts tool (one source for repeated facts), then T-169.
 >
 > **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -78,7 +78,7 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 
 **The standing independent verdict is RED.** ELEVEN rounds; the current one is
 [`2026-10-09-eleventh-audit-e3fc507.md`](apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md)
-— no P0, four P1 (`K-01`–`K-04`), `K-03` fixed ◑, nine open. Read `e3fc507`;
+— no P0, four P1 (`K-01`–`K-04`), `K-03`, `K-05` fixed ◑, eight open. Read `e3fc507`;
 everything merged after it is ◑.
 
 **Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:

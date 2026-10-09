@@ -218,8 +218,8 @@ item below is settled, a **separate** audit passes, and the Owner approves — i
 > one document and the key would sign a smaller one, and one account would hold the key, the state
 > and the verifier. Decisions D1 and D2 are overruled.
 >
-> **Recommended, in this order:** ~~fix `K-03`~~ (done); withdraw
-> the self-test grant until its model seam is split out (`K-05`); redesign `T-169` around a fully
+> **Recommended, in this order:** ~~fix `K-03`~~ (done); ~~`K-05`~~ (done: the self-test
+> runs no model, the grant stays); redesign `T-169` around a fully
 > signed command and a separate principal; take `K-01`, `K-02` and `K-04` before anything clears
 > refusal 3. `K-07` is engine security code and waits for its own audited pull request.
 
@@ -1295,8 +1295,9 @@ larger piece of work (not sized here)". Nobody had looked. You asked why not bui
 took minutes: the chain the self-test runs has no Windows code in it, `brops-win-live`'s own test
 of it already passed on this Linux machine, and the only thing keeping it out of the Linux host
 was one `cfg(windows)` dependency line. That line is unconditional now. The model seam
-(`BROPS_SELFTEST_MODEL_CMD`) stays Windows-only on purpose: off Windows the self-test spawns
-nothing and says its answer is the built-in placeholder.
+(`BROPS_SELFTEST_MODEL_CMD`) is **gone from the self-test on every platform since `K-05`**: it
+spawns nothing and says its answer is the built-in placeholder. The chat's Demo-verify command
+still reads that variable on Windows and is classified as executing (tier X), not as a read.
 
 **Seen the same day, with the mirror provisioned by hand and the Linux self-test installed.** The
 application was started with `BROPS_GOVERNANCE_STATE_DIR` naming a new empty directory under the

@@ -4,9 +4,9 @@
 > [`docs/archive/TASKS_ARCHIVE_2026-08.md`](docs/archive/TASKS_ARCHIVE_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `5d94f6f`.** PR #384 on `fix/k03-trigger-panic` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `1c72f8c`.** PR #385 on `fix/k05-selftest-runs-no-model` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** withdraw the self-test grant (K-05), then the T-169 redesign.
+> **Next:** the facts tool (one source for repeated facts), then T-169.
 >
 > **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -19,8 +19,8 @@ Status: `Todo` · `In-Progress` · `Review` · `Done` · `Blocked`. ◑ the Buil
 | ID | Task | Claimed by | Status | Branch / PR |
 |----|------|-----------|--------|-------------|
 | **T-145** | **The whole repository, read file by file** — three records, all findings OPEN unless struck: [first read](docs/WHOLE_REPO_READ_2026-10-01.md) 932 (682 fixed, 87 open, 36 wait on the Owner §8); [engine, tools, documents](docs/WHOLE_REPO_READ_2026-10-02.md) 1226; [the cockpit](docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md) 1370 (74 closed, 1 half, 1 partly refuted, 1 already covered — each marked in the record), where the readers left 168 files unfinished ◑ | Bro | In-Progress | `#332` |
-| **T-169** | **The owner-command path** — [design](docs/design/OWNER_COMMAND_PATH_DESIGN.md) **REJECTED** in [review](docs/design/OWNER_COMMAND_PATH_REVIEW.md); redesign: sign the whole command, separate custody | — | Todo | — |
-| **T-170** | **The eleventh audit's findings** — `K-01`–`K-10` in the [ledger](apps/desktop/AUDIT/AUDIT_LEDGER.md), `K-03` fixed ◑, nine open; `K-07` waits for an audited PR | — | Todo | — |
+| **T-169** | **The owner-command path** — [design](docs/design/OWNER_COMMAND_PATH_DESIGN.md) **REJECTED** in [review](docs/design/OWNER_COMMAND_PATH_REVIEW.md); redesign owed | — | Todo | — |
+| **T-170** | **The eleventh audit's findings** — `K-01`–`K-10` in the [ledger](apps/desktop/AUDIT/AUDIT_LEDGER.md), `K-03`, `K-05` fixed ◑; `K-07` waits for an audited PR | — | Todo | — |
 | **T-131** | **Install-minted root** — A, C, D and B's accounts+entry merged; deployment open | Bro | In-Progress | — |
 | **T-021d** | **PHASE 2 CLOSED, 11/11** - the page asks the engine in a section named apart from this app's own authority, and the roadmap gained the enumeration a moved checkbox needs ◑ | Bro | Review | `#257` |
 | **T-021c** | **The desktop asks across the wall and cannot be told it decided** - the command, the parser, and the contract test phase 2 asked for; a reply claiming a decision is blocked ◑ | Bro | Review | `#256` |
