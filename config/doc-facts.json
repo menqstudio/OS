@@ -1,0 +1,229 @@
+{
+  "schema": 1,
+  "purpose": "Facts that several documents repeat, each with ONE source. tools/sync_facts.py --write brings every use to its source; --check, which CI runs, is RED when one has drifted. A fact is added here when it is found in a second file, not before.",
+  "facts": {
+    "audit_round": {
+      "source": {
+        "regex": {
+          "file": "apps/desktop/AUDIT/AUDIT_LEDGER.md",
+          "pattern": "the \\*\\*([A-Z]+)\\*\\* independent audit"
+        }
+      }
+    },
+    "audit_report": {
+      "source": {
+        "regex": {
+          "file": "apps/desktop/AUDIT/AUDIT_LEDGER.md",
+          "pattern": "Authoritative current assessment:\\*\\* \\[`([^`]+)`\\]"
+        }
+      }
+    },
+    "audit_head": {
+      "source": {
+        "regex": {
+          "file": "apps/desktop/AUDIT/AUDIT_LEDGER.md",
+          "pattern": "independent audit, of `main` @ `([0-9a-f]+)`"
+        }
+      }
+    },
+    "rust_tests": {
+      "source": {
+        "value": "1434"
+      },
+      "note": "cargo test --workspace --no-fail-fast, measured by hand; change it here and nowhere else"
+    },
+    "engine_tests": {
+      "source": {
+        "json": {
+          "file": "config/counted-claims.json",
+          "path": "claims.engine_tests.value"
+        }
+      }
+    },
+    "frontend_tests": {
+      "source": {
+        "json": {
+          "file": "config/counted-claims.json",
+          "path": "claims.frontend_tests.value"
+        }
+      }
+    },
+    "gate_scripts": {
+      "source": {
+        "json": {
+          "file": "config/counted-claims.json",
+          "path": "claims.gate_scripts.value"
+        }
+      }
+    }
+  },
+  "documents": [],
+  "targets": [
+    {
+      "file": "CLAUDE.md",
+      "fact": "audit_report",
+      "pattern": "\\[`([^`]+-audit-[0-9a-f]+\\.md)`\\]\\(\\./apps/desktop/AUDIT/"
+    },
+    {
+      "file": "CLAUDE.md",
+      "fact": "audit_report",
+      "pattern": "\\]\\(\\./apps/desktop/AUDIT/([^)]+-audit-[0-9a-f]+\\.md)\\)"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "audit_report",
+      "pattern": "\\[`([^`]+-audit-[0-9a-f]+\\.md)`\\]\\(apps/desktop/AUDIT/"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "audit_report",
+      "pattern": "\\]\\(apps/desktop/AUDIT/([^)]+-audit-[0-9a-f]+\\.md)\\)"
+    },
+    {
+      "file": "START_HERE.md",
+      "fact": "audit_report",
+      "pattern": "\\[`([^`]+-audit-[0-9a-f]+\\.md)`\\]\\(\\./apps/desktop/AUDIT/"
+    },
+    {
+      "file": "START_HERE.md",
+      "fact": "audit_report",
+      "pattern": "\\]\\(\\./apps/desktop/AUDIT/([^)]+-audit-[0-9a-f]+\\.md)\\)"
+    },
+    {
+      "file": "CLAUDE.md",
+      "fact": "rust_tests",
+      "pattern": "cargo test --workspace +# (\\d+) passed"
+    },
+    {
+      "file": "CLAUDE.md",
+      "fact": "engine_tests",
+      "pattern": "unittest discover -s tests +# (\\d+) OK"
+    },
+    {
+      "file": "CLAUDE.md",
+      "fact": "frontend_tests",
+      "pattern": "npm test +# (\\d+) tests"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "rust_tests",
+      "pattern": "cargo test --workspace +# (\\d+) passed"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "engine_tests",
+      "pattern": "unittest discover -s tests +# (\\d+) OK"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "frontend_tests",
+      "pattern": "npm test +# (\\d+) tests"
+    },
+    {
+      "file": "NEXT_CHAT.md",
+      "fact": "audit_head",
+      "pattern": "Read `([0-9a-f]+)`;"
+    },
+    {
+      "file": "PROJECT_STATE.md",
+      "fact": "audit_round",
+      "pattern": "the ([A-Z]+) round, `main` at"
+    },
+    {
+      "file": "PROJECT_STATE.md",
+      "fact": "audit_head",
+      "pattern": "round, `main` at `([0-9a-f]+)`"
+    },
+    {
+      "file": "PROJECT_STATE.md",
+      "fact": "rust_tests",
+      "pattern": "\\| (\\d+) passed, 1 ignored"
+    },
+    {
+      "file": "START_HERE.md",
+      "fact": "audit_round",
+      "pattern": "the current one is the\\n> ([a-z]+), \\[",
+      "filter": "lower"
+    },
+    {
+      "file": "README.md",
+      "fact": "audit_round",
+      "pattern": "the ([A-Z]+) round, `main` @"
+    },
+    {
+      "file": "README.md",
+      "fact": "audit_head",
+      "pattern": "the [A-Z]+ round, `main` @ `([0-9a-f]+)`"
+    },
+    {
+      "file": "README.md",
+      "fact": "audit_head",
+      "pattern": "ռաունդը, `main` @ `([0-9a-f]+)`"
+    },
+    {
+      "file": "README.md",
+      "fact": "audit_head",
+      "pattern": "git log --format=%s ([0-9a-f]+)\\.\\.HEAD"
+    },
+    {
+      "file": "README.md",
+      "fact": "audit_head",
+      "pattern": "git diff --shortstat ([0-9a-f]+)\\.\\.HEAD"
+    },
+    {
+      "file": "docs/EVIDENCE_INDEX.md",
+      "fact": "audit_report",
+      "pattern": "\\*\\*\\[`apps/desktop/AUDIT/([^`]+-audit-[0-9a-f]+\\.md)`\\]"
+    },
+    {
+      "file": "docs/EVIDENCE_INDEX.md",
+      "fact": "audit_report",
+      "pattern": "`\\]\\(\\.\\./apps/desktop/AUDIT/([^)]+-audit-[0-9a-f]+\\.md)\\)\\*\\*"
+    },
+    {
+      "file": "docs/EVIDENCE_INDEX.md",
+      "fact": "audit_head",
+      "pattern": "code audit at `main` @ `([0-9a-f]+)`"
+    },
+    {
+      "file": "docs/EVIDENCE_INDEX.md",
+      "fact": "audit_head",
+      "pattern": "round's head \\(`([0-9a-f]+)`\\) carries"
+    },
+    {
+      "file": "config/current_state.json",
+      "fact": "audit_report",
+      "pattern": "\\\"last_independent_audit\\\": \\\"apps/desktop/AUDIT/([^\\\"]+)\\\""
+    },
+    {
+      "file": "config/current_state.json",
+      "fact": "audit_round",
+      "pattern": "binds the ledger and docs/OWNER_ACTION_REQUIRED\\.md to\\. The ([A-Z]+) round"
+    },
+    {
+      "file": "config/current_state.json",
+      "fact": "audit_round",
+      "pattern": "verdict is RED -- the ([A-Z]+) round"
+    },
+    {
+      "file": "config/current_state.json",
+      "fact": "audit_report",
+      "pattern": "RED -- the [A-Z]+ round, apps/desktop/AUDIT/([^,]+),"
+    },
+    {
+      "file": "README.md",
+      "fact": "gate_scripts",
+      "pattern": "tools/ +(\\d+) check_\\*\\.py gate scripts"
+    },
+    {
+      "file": "README.md",
+      "fact": "gate_scripts",
+      "pattern": "\\| Gate scripts \\| \\*\\*(\\d+)\\*\\*"
+    },
+    {
+      "file": "README.md",
+      "fact": "gate_scripts",
+      "pattern": "`ls tools/check_\\*\\.py \\\\\\| wc -l` \\((\\d+)\\) plus"
+    }
+  ]
+}

@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `1c72f8c`.** PR #385 on `fix/k05-selftest-runs-no-model` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `9194b40`.** PR #386 on `tools/sync-facts` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** the facts tool (one source for repeated facts), then T-169.
+> **Next:** T-169 redesign; K-01, K-02, K-04.
 >
 > **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -75,7 +75,7 @@ All 35 contexts in `config/required-checks.json` are required on `main`, with `s
 on this plan a private repository carries no protection, and going private deletes the rules.
 
 **The `.deb` was installed here 2026-10-09** and runs: mirrors granted, self-test on Linux,
-governed turn refused (OWNER 2h). `T-169`'s owner-command design was REJECTED.
+governed turn refused (OWNER 2h). `T-169`'s design was REJECTED. `tools/sync_facts.py` writes repeated facts (`T-171`).
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.
