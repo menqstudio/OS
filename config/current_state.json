@@ -1,17 +1,17 @@
 {
   "schema": 2,
   "purpose": "The machine-readable mirror of the human coordination docs. tools/check_coordination.py validates the agreement; tools/check_repo_state.py verifies it against live GitHub, exact-head and fail-closed.",
-  "settled_at_main_head": "17fa94fc20a66397b9434a97e1673fa7e6ec5b46",
+  "settled_at_main_head": "e3fc507fc325506cd62333487ee25fe6a28fed54",
   "sync": {
-    "baseline_main_head_at_sync": "17fa94fc20a66397b9434a97e1673fa7e6ec5b46",
-    "snapshot_branch": "docs/mirror-seen",
+    "baseline_main_head_at_sync": "e3fc507fc325506cd62333487ee25fe6a28fed54",
+    "snapshot_branch": "design/owner-command",
     "live_main_resolution": "Read settled_at_main_head and active.* -- never a commit id written into prose. This field once named a head that stayed put for twenty days and ~80 merged PRs because nothing compared it with anything (ninth audit I-06). History: docs/archive/SESSION_LOG_2026-07_2026-08.md.",
     "verification": "check_repo_state is EXACT-HEAD fail-closed. Durable PRs in prs[] are compared with their live heads; the self-carrier is current_workflow_pr, anchored on its branch by the PR-body AUDIT_CANDIDATE_HEAD marker and kept in lockstep with every push. Nothing is exempt."
   },
   "active": {
     "wave": "production-half",
     "task": "floor-writer",
-    "branch": "docs/mirror-seen"
+    "branch": "design/owner-command"
   },
   "prs": [],
   "status_tokens": {
@@ -113,23 +113,23 @@
     "CI-green is NOT design/audit-green. The Windows LIVE kit machine-proves the Windows governed turn to trusted_verified over named pipes, and the SHIPPED app stays fail-closed. Do not read one as the other."
   ],
   "current_workflow_pr": {
-    "number": 381,
-    "branch": "docs/mirror-seen",
-    "what": "The settle commit: records the state as of main 17fa94f.",
-    "note": "Settled as of main 17fa94f; this pull request records it and merges after that head. Nothing else was open when it was written.",
+    "number": 382,
+    "branch": "design/owner-command",
+    "what": "The settle commit: records the state as of main e3fc507.",
+    "note": "Settled as of main e3fc507; this pull request records it and merges after that head. Nothing else was open when it was written.",
     "base": "main"
   },
   "next_action_by_carrier": {
-    "current": "PR #381 (docs/mirror-seen) settles the state at main 17fa94f. Next: Owner: commission the next independent audit.",
-    "_note": "The carrier is current_workflow_pr (#381 on docs/mirror-seen). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
+    "current": "PR #382 (design/owner-command) settles the state at main e3fc507. Next: Owner: hand T-169 (PR #382) and the code-audit scope to an independent auditor.",
+    "_note": "The carrier is current_workflow_pr (#382 on design/owner-command). This block is rewritten by tools/sync_active_pr.py whenever the carrier moves: it modelled PR #48 as the open carrier for three days after #48 merged, because nothing updated it. No merge-transition is modeled (there is no carrier_transition block), so the branches below are advisory prose, not gate inputs."
   },
   "main_ci": {
     "_note": "What main's OWN runs said, and when. Rule and reasons: tools/check_repo_state.py::main_ci_failures.",
     "ci": {
-      "head": "17fa94fc20a66397b9434a97e1673fa7e6ec5b46",
+      "head": "e3fc507fc325506cd62333487ee25fe6a28fed54",
       "conclusion": "success",
-      "run_id": 37862290255,
-      "note": "Read by tools/sync_active_pr.py on 2026-10-09: success at 17fa94f, run 37862290255."
+      "run_id": 37863547399,
+      "note": "Read by tools/sync_active_pr.py on 2026-10-09: success at e3fc507, run 37863547399."
     }
   },
   "_comment": "PARKED pull requests are listed in prs[] with number, branch, base, draft, merge_state, role and their EXACT live head, and no per-entry `why_listed`: they are all open behind the carrier and merge in the Owner's stated order, which is one fact and is said here once rather than five times. check_repo_state exact-head-verifies each of them."
