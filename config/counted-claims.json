@@ -68,7 +68,7 @@
       ]
     },
     "workflow_files": {
-      "value": 8,
+      "value": 10,
       "command": "ls .github/workflows/*.yml | wc -l",
       "derive": {
         "glob": ".github/workflows/*.yml"

@@ -1,0 +1,23 @@
+# MenQ Standard conformance (decision D-029).
+# RENDERED from the kit template templates/menq-standard-conformance.yml by
+# `check_conformance.py install`; the pin records its hash. Do not edit: re-render.
+#
+# It calls the standard's reusable workflow at a full commit SHA. That workflow checks out this
+# repository and the standard at the commit the pin names, and runs the STANDARD's copy of the
+# checker, so a repository cannot pass by editing its own.
+name: MenQ Standard Conformance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    uses: menqstudio/MenQ-Standard/.github/workflows/consumer-conformance.yml@__MENQ_STANDARD_COMMIT__

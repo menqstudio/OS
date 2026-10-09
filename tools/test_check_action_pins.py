@@ -151,6 +151,61 @@ class ActionPinGateTests(unittest.TestCase):
         )
         self.assertTrue(any("MORE THAN ONE action" in p for p in check(root)), check(root))
 
+    # ---- workflows rendered by MenQ Standard (T-171) ----
+
+    OTHER_CHECKOUT = "11d5960a326750d5838078e36cf38b85af677262"
+
+    def _with_standard_workflow(self, body: str, recorded: str | None = None) -> pathlib.Path:
+        import hashlib
+        import json
+        root = _tree({
+            "ci.yml": _job(f"actions/checkout@{CHECKOUT} # v4.2.2"),
+            "menq-standard-update.yml": body,
+        })
+        digest = recorded or hashlib.sha256(body.encode("utf-8")).hexdigest()
+        (root / ".menq-standard.json").write_text(json.dumps({"workflows": {
+            ".github/workflows/menq-standard-update.yml": {"sha256": digest}}}), encoding="utf-8")
+        return root
+
+    def test_a_workflow_matching_the_standards_pin_keeps_the_standards_versions(self):
+        root = self._with_standard_workflow(_job(f"actions/checkout@{self.OTHER_CHECKOUT}"))
+        self.assertEqual(check(root), [])
+
+    def test_the_same_workflow_without_a_pin_file_is_red(self):
+        root = self._with_standard_workflow(_job(f"actions/checkout@{self.OTHER_CHECKOUT}"))
+        (root / ".menq-standard.json").unlink()
+        problems = "\n".join(check(root))
+        self.assertIn("no trailing", problems)
+        self.assertIn("pinned inconsistently", problems)
+
+    def test_a_workflow_edited_after_rendering_loses_the_exemption(self):
+        root = self._with_standard_workflow(
+            _job(f"actions/checkout@{self.OTHER_CHECKOUT}"), recorded="0" * 64)
+        self.assertIn("pinned inconsistently", "\n".join(check(root)))
+
+    def test_a_floating_tag_in_a_standard_workflow_is_still_red(self):
+        root = self._with_standard_workflow(_job("actions/checkout@v4"))
+        self.assertIn("not pinned to a 40-hex", "\n".join(check(root)))
+
+    def test_a_cross_claimed_commit_in_a_standard_workflow_is_still_red(self):
+        root = self._with_standard_workflow(_job(f"actions/setup-node@{CHECKOUT}"))
+        self.assertIn("MORE THAN ONE action", "\n".join(check(root)))
+
+    def test_a_crlf_checkout_of_a_standard_workflow_keeps_the_exemption(self):
+        import hashlib
+        body = _job(f"actions/checkout@{self.OTHER_CHECKOUT}")
+        root = self._with_standard_workflow(body, recorded=hashlib.sha256(body.encode()).hexdigest())
+        path = root / ".github" / "workflows" / "menq-standard-update.yml"
+        path.write_bytes(body.replace("\n", "\r\n").encode("utf-8"))
+        self.assertEqual(check(root), [])
+
+    def test_a_malformed_pin_file_exempts_nothing(self):
+        for text in ("{", "[]", '{"workflows": []}', '{"workflows": {".github/workflows/menq-standard-update.yml": "x"}}'):
+            with self.subTest(pin=text):
+                root = self._with_standard_workflow(_job(f"actions/checkout@{self.OTHER_CHECKOUT}"))
+                (root / ".menq-standard.json").write_text(text, encoding="utf-8")
+                self.assertIn("pinned inconsistently", "\n".join(check(root)))
+
     def test_the_real_repository_is_green(self):
         self.assertEqual(check(pathlib.Path(__file__).resolve().parents[1]), [])
 

@@ -70,8 +70,14 @@ MIN_REASON_CHARS = 60
 # product code -- otherwise "meta" becomes the universal way around phase order.
 META_ALLOWED_PREFIXES = (
     "tools/", ".claude/", "config/", "docs/", ".github/",
+    # The MenQ Standard consumer kit (Owner, 2026-10-09). The standard fixes both places: the kit
+    # is one directory at the repository root and the pin is one file beside it. Every kit file
+    # is hash-pinned and never edited here, so this is tooling, not product code.
+    "menq-standard/",
 )
 META_ALLOWED_SUFFIXES = (".md",)
+# Exact paths, not prefixes: `.menq-standard.json.bak` or a copy in a subdirectory is not the pin.
+META_ALLOWED_FILES = (".menq-standard.json",)
 
 _PHASE_RE = re.compile(r"(?m)^##\s+Phase\s+(\d+)\s*[-—–]")
 _DOD_RE = re.compile(r"(?m)^\*\*Definition of Done\.\*\*")
@@ -379,7 +385,8 @@ def scope_problem(root: pathlib.Path, sid: str, rel_path: str) -> str | None:
     # check_audit_reports.py:119; check_doc_claims.py had already hit it and fixed it inline.
     # tools/check_no_lstrip_prefix.py refuses the form now.
     rel = str(rel_path).replace("\\", "/").removeprefix("./")
-    if rel.startswith(META_ALLOWED_PREFIXES) or rel.endswith(META_ALLOWED_SUFFIXES):
+    if (rel.startswith(META_ALLOWED_PREFIXES) or rel.endswith(META_ALLOWED_SUFFIXES)
+            or rel in META_ALLOWED_FILES):
         return None
     return (f"this session declared `meta` (repository governance/tooling), which may not edit "
             f"{rel}. Meta scope is {', '.join(META_ALLOWED_PREFIXES)} and *.md. To change "
