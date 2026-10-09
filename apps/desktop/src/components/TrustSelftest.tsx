@@ -134,7 +134,7 @@ export function TrustSelftestPanel() {
                 <span className="pill warn">{tr('NO MODEL RAN', 'ՄՈԴԵԼ ՉԻ ԱՇԽԱՏԵԼ', 'МОДЕЛЬ НЕ ЗАПУСКАЛАСЬ')}</span>{' '}
                 {result.answer_source === 'builtin_placeholder_model_failed'
                   ? tr('A model was configured but did not run or returned nothing; the chain bound the built-in placeholder instead.', 'Մոդելը կարգավորված էր, բայց չաշխատեց կամ ոչինչ չվերադարձրեց. շղթան կապեց ներկառուցված լրացուցիչ տեքստը։', 'Модель была настроена, но не запустилась или ничего не вернула; цепочка связала встроенную заглушку.')
-                  : tr('No model is configured for the self-test (BROPS_SELFTEST_MODEL_CMD), so the chain bound the built-in placeholder. This proves the CHAIN, not the model.', 'Ինքնաստուգման համար մոդել կարգավորված չէ (BROPS_SELFTEST_MODEL_CMD), ուստի շղթան կապեց ներկառուցված տեքստը։ Սա ապացուցում է ՇՂԹԱՆ, ոչ թե մոդելը։', 'Для самопроверки модель не настроена (BROPS_SELFTEST_MODEL_CMD), поэтому цепочка связала встроенную заглушку. Это доказывает ЦЕПОЧКУ, а не модель.')}
+                  : tr('The self-test runs no model: the chain bound the built-in placeholder. This proves the CHAIN, not the model.', 'Ինքնաստուգումը մոդել չի գործարկում. շղթան կապեց ներկառուցված տեքստը։ Սա ապացուցում է ՇՂԹԱՆ, ոչ թե մոդելը։', 'Самопроверка не запускает модель: цепочка связала встроенную заглушку. Это доказывает ЦЕПОЧКУ, а не модель.')}
               </p>
             )}
             <p className="ts-caveat" role="note">

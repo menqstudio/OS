@@ -25,7 +25,7 @@ The tenth round, superseded: [`2026-09-19-tenth-audit-75fca65.md`](./2026-09-19-
 `J-01`–`J-04` are in [`AUDIT_LEDGER_ARCHIVE.md`](./AUDIT_LEDGER_ARCHIVE.md) under *Round 10*; the
 ninth is there under *Round 9*.
 
-> ## THE ELEVENTH ROUND: TEN FILED, ONE ANSWERED BY THE BUILDER
+> ## THE ELEVENTH ROUND: TEN FILED, TWO ANSWERED BY THE BUILDER
 >
 > The gate is shut and the round confirms it. What it found is **behind** the gate and beside it:
 > `K-01` and `K-02` make the governed path fail the day refusal 3 is cleared, `K-03` was **reachable**
@@ -63,7 +63,7 @@ Filed at `e3fc507`. Open unless the row says otherwise; the report has the repro
 | `K-02` | P1 | **A governed conversation blocks after its first reply**: the desktop stores role `agent`, the broker accepts `user`/`assistant`/`system`, and the passing fixture hand-inserts `assistant`. | 🔴 Open |
 | `K-03` | P1 | **A non-ASCII automation trigger panics the scheduler while it holds the database mutex** — `parse_interval_ms` splits on a byte index. | ◑ Fixed after the round: the unit comes off by `strip_suffix`, an overflowing count is refused, and two tests panicked on the old parser first — one of them through `run_due` with the row enabled |
 | `K-04` | P1 | **Native approval text can be forged by the payload being approved**: control and bidi characters reach the trusted dialog. | 🔴 Open |
-| `K-05` | P2 | **`#378` granted a shell-running, unbounded command as tier R** — the trust self-test, on Windows with `BROPS_SELFTEST_MODEL_CMD` set. | 🔴 Open |
+| `K-05` | P2 | **`#378` granted a shell-running, unbounded command as tier R** — the trust self-test, on Windows with `BROPS_SELFTEST_MODEL_CMD` set. | ◑ Fixed after the round: the self-test spawns nothing on any platform and reads no variable; the grant stays. The test fails when a spawn is put back. Not looked at: `demonstration_verified_reply` still runs that variable on Windows, as tier X |
 | `K-06` | P2 | **The automation delete prompt is text-spoofable and checks less than it shows** (`enabled` is displayed, not compared). | 🔴 Open |
 | `K-07` | P2 | **Signer store corruption raises instead of refusing** — OWNER item 5, now with a reproduction. Signs nothing. | 🔴 Open, engine security code |
 | `K-08` | P2 | **A failed run step does not fail the run**; the next pending step stays claimable. | 🔴 Open |

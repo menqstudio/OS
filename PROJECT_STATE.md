@@ -57,7 +57,7 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 ## Standing risks
 
 **RED is the independent verdict** — the ELEVENTH round, `main` at `e3fc507`, no P0, four P1
-(`K-01`–`K-10` open in the ledger). Everything merged after that head is ◑.
+(`K-03`, `K-05` fixed ◑; eight open). Everything merged after that head is ◑.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

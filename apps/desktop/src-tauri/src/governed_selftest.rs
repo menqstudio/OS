@@ -53,8 +53,8 @@ pub struct TrustSelftest {
     /// The kit's own trust string (e.g. `trusted_verified(production key=… epoch=…)`).
     pub detail: String,
     /// The reply the chain's executor produced INSIDE the governed turn and which the receipt then bound +
-    /// verified — the honest end-to-end artifact. With `BROPS_SELFTEST_MODEL_CMD` set this is a real model
-    /// answer; otherwise a fixed demonstration string. Always demonstration custody (see `demonstration_custody`).
+    /// verified — the honest end-to-end artifact. It is the built-in placeholder: this command runs
+    /// no model (K-05). Always demonstration custody (see `demonstration_custody`).
     pub answer: String,
     /// Whether a model produced `answer`, or the built-in placeholder was bound instead — and
     /// which of the two reasons (remediation audit, honesty finding).
@@ -107,57 +107,26 @@ const SELFTEST_DEMO_OUTPUT: &[u8] = b"BROPS governed self-test output v1";
 #[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum AnswerSource {
-    /// A configured model ran and produced these exact bytes.
+    /// A configured model ran and produced these exact bytes. Not produced by this command since
+    /// K-05; the variant stays because the renderer's contract names it.
+    #[allow(dead_code)]
     Model,
     /// No model was configured — the built-in placeholder was bound instead.
     BuiltinPlaceholderNoModelConfigured,
-    /// A model was configured but did not run, or produced nothing usable.
+    /// A model was configured but did not run, or produced nothing usable. As `Model`.
+    #[allow(dead_code)]
     BuiltinPlaceholderModelFailed,
 }
 
-/// The model seam exists on WINDOWS ONLY, and that is deliberate. Off Windows this never spawns
-/// anything: the self-test proves the chain over the built-in placeholder and says so. Running
-/// `$BROPS_SELFTEST_MODEL_CMD` through a shell would be a new, ungoverned way to execute a
-/// command from the desktop host on a platform that has none today, and the self-test does not
-/// need it to do its job.
-#[cfg(not(windows))]
-fn run_selftest_model(_cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
+/// The self-test runs NO model and spawns NO process, on any platform (K-05, eleventh audit).
+///
+/// Until 2026-10-09 the Windows build ran `cmd /C $BROPS_SELFTEST_MODEL_CMD` here, with no deadline
+/// and no cap on its output, and waited for it. `#378` then granted this command to the window as
+/// a read. A compromised renderer could not choose the command text, but it chose when and how
+/// often the configured process ran — and a command that never exits never returned. The self-test
+/// exists to prove the CHAIN; it binds the built-in placeholder and says so.
+fn selftest_answer() -> (Vec<u8>, AnswerSource) {
     (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderNoModelConfigured)
-}
-
-#[cfg(windows)]
-fn run_selftest_model(cmd: Option<&str>) -> (Vec<u8>, AnswerSource) {
-    let cmd = match cmd {
-        Some(c) if !c.trim().is_empty() => c,
-        _ => {
-            return (
-                SELFTEST_DEMO_OUTPUT.to_vec(),
-                AnswerSource::BuiltinPlaceholderNoModelConfigured,
-            )
-        }
-    };
-    let prompt = "In one short sentence, confirm the BroPS governed trust chain produced this reply.";
-    // `cmd /C <cmd>` so the operator can point it at any model CLI; the prompt rides in on stdin.
-    let spawned = std::process::Command::new("cmd")
-        .args(["/C", &cmd])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    let mut child = match spawned {
-        Ok(c) => c,
-        Err(_) => {
-            return (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderModelFailed)
-        }
-    };
-    if let Some(mut si) = child.stdin.take() {
-        use std::io::Write;
-        let _ = si.write_all(prompt.as_bytes());
-    }
-    match child.wait_with_output() {
-        Ok(o) if o.status.success() && !o.stdout.is_empty() => (o.stdout, AnswerSource::Model),
-        _ => (SELFTEST_DEMO_OUTPUT.to_vec(), AnswerSource::BuiltinPlaceholderModelFailed),
-    }
 }
 
 /// Run the governed trust-chain self-test: the real in-process turn, on every platform.
@@ -178,10 +147,9 @@ pub fn governed_trust_selftest() -> Result<TrustSelftest, String> {
         // governed execution step), so the receipt binds exactly what the chain's executor produced — not a
         // pre-computed value merely signed after the fact. Capture it to surface the honest end-to-end answer.
         let captured = std::cell::RefCell::new(Vec::<u8>::new());
-        let cmd_env = std::env::var("BROPS_SELFTEST_MODEL_CMD").ok();
         let source = std::cell::Cell::new(AnswerSource::BuiltinPlaceholderNoModelConfigured);
         let produce = || -> Result<Vec<u8>, ()> {
-            let (out, from) = run_selftest_model(cmd_env.as_deref());
+            let (out, from) = selftest_answer();
             if out.is_empty() {
                 return Err(());
             }
@@ -278,54 +246,22 @@ mod runs_everywhere {
         assert!(!r.answer.is_empty());
     }
 
-    /// Off Windows the model seam spawns NOTHING, whatever the variable says.
-    #[cfg(not(windows))]
+    /// The command spawns NOTHING, on any platform, whatever the variable says (K-05). The
+    /// variable is set for the length of the run to a command that would leave a file behind.
     #[test]
-    fn off_windows_a_configured_command_is_not_run() {
+    fn a_configured_model_command_is_never_run() {
         let marker = std::env::temp_dir().join(format!("brops-selftest-must-not-exist-{}", brops_core::id()));
+        #[cfg(windows)]
+        let cmd = format!("type nul > \"{}\"", marker.display());
+        #[cfg(not(windows))]
         let cmd = format!("touch {}", marker.display());
-        let (out, src) = run_selftest_model(Some(&cmd));
-        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
-        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
+        std::env::set_var("BROPS_SELFTEST_MODEL_CMD", &cmd);
+        let r = governed_trust_selftest();
+        std::env::remove_var("BROPS_SELFTEST_MODEL_CMD");
+        let r = r.expect("the self-test command must answer");
         assert!(!marker.exists(), "the configured command was executed");
-    }
-}
-
-#[cfg(all(test, windows))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn model_seam_defaults_to_the_demonstration_output_and_says_so() {
-        // No configured command (and CI) → the fixed demonstration bytes, so the chain still exercises
-        // end-to-end without any external model dependency. The SOURCE has to travel with it: a
-        // placeholder that reports itself as a model answer is how a verified receipt over a constant
-        // became indistinguishable from a verified receipt over a real reply.
-        let (out, src) = run_selftest_model(None);
-        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
-        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
-        let (out, src) = run_selftest_model(Some("   "));
-        assert_eq!(out, SELFTEST_DEMO_OUTPUT, "blank command is treated as unset");
-        assert_eq!(src, AnswerSource::BuiltinPlaceholderNoModelConfigured);
-    }
-
-    #[test]
-    fn a_failing_model_is_reported_as_a_failure_not_as_an_answer() {
-        // The case that mattered most: a configured model that does not work. The bytes fall back,
-        // and the source says the model FAILED — distinct from never having been configured.
-        let (out, src) = run_selftest_model(Some("exit 1"));
-        assert_eq!(out, SELFTEST_DEMO_OUTPUT);
-        assert_eq!(src, AnswerSource::BuiltinPlaceholderModelFailed);
-    }
-
-    #[test]
-    fn model_seam_uses_a_configured_command_stdout() {
-        // A configured command's stdout is exactly what the chain will bind + verify — proving a real model
-        // CLI can be plugged in. `echo` is a cmd.exe builtin, so this needs no external tool.
-        let (out, src) = run_selftest_model(Some("echo governed-ok"));
-        let text = String::from_utf8_lossy(&out);
-        assert!(text.contains("governed-ok"), "the configured command's stdout is the reply: {text:?}");
-        assert_ne!(out, SELFTEST_DEMO_OUTPUT, "a working command must not fall back to the demo bytes");
-        assert_eq!(src, AnswerSource::Model);
+        assert_eq!(r.answer_source, AnswerSource::BuiltinPlaceholderNoModelConfigured);
+        assert!(!r.answer_is_from_a_model);
+        assert_eq!(r.answer.as_bytes(), SELFTEST_DEMO_OUTPUT);
     }
 }
