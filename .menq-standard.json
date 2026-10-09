@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "standard": {
+    "repository": "menqstudio/MenQ-Standard",
+    "version": "2.0.0",
+    "commit": "d6eeb195e3026c845a3c92794e3ba523a3c28345"
+  },
+  "kit_dir": "menq-standard",
+  "session_read_manifest": "config/session-read-manifest.json",
+  "hash": "sha256 of the file's bytes after CRLF is folded to LF",
+  "files": {
+    "ADOPTION.md": "6c59041a8199d2b9227d05865c57f5e3f886556e543d150e2f997742d8fb04eb",
+    "CONSUMER_CONTRACT.md": "15374d02adef4b58f0505f670f19786137b8bacd88d9c289386f4d31c53675ab",
+    "SYNC_FACTS.md": "22406aa9c6c73b2545bdd5bd826a900eb740ee8f20648913f23a6182301ac92f",
+    "check_conformance.py": "cf9287a45a83ab277401ff2afc85dbdf7ad53713006897ed15c5bab9dbbdb1cd",
+    "check_session_read_budget.py": "e26f40fc1fad153ffd811dddea4ab3cc4edfc5c0668c2b7f287e35d07c4414a5",
+    "sync_facts.py": "d4fed6389fff2dce8fdf6a0cf0c28f394b8fe5dd4aa562d4148716a74bafd74d",
+    "templates/menq-standard-conformance.yml": "2242a25d55fde4dce1ddbc81c06f97b564a9948defc12247c5c9550e373c6c7a",
+    "templates/menq-standard-update.yml": "37ed64096953b5a2cadcb72d01c6dab9bbef25bfb21d5c893a586cd458c0e814",
+    "test_sync_facts.py": "9baea6c22f981fe41312d50d3e71643f2aeac9d0e14e222a9db283a3a3160d7c"
+  },
+  "workflows": {
+    ".github/workflows/menq-standard-conformance.yml": {
+      "template": "templates/menq-standard-conformance.yml",
+      "commit": "d6eeb195e3026c845a3c92794e3ba523a3c28345",
+      "sha256": "57d032c256f4ee94924ca9533ce1b91059796877981747f070668b294947ca95"
+    },
+    ".github/workflows/menq-standard-update.yml": {
+      "template": "templates/menq-standard-update.yml",
+      "commit": "d6eeb195e3026c845a3c92794e3ba523a3c28345",
+      "sha256": "8a2078ebd8865a1fa35ce794c37e65c7ec3cf21c40282e78cd61a5a0cf0ef237"
+    }
+  }
+}

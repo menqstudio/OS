@@ -192,6 +192,15 @@ class DeclarationTests(unittest.TestCase):
         self.assertIsNotNone(problem)
         self.assertIn("may not edit", problem)
 
+    def test_meta_reaches_the_standards_kit_and_pin_and_nothing_beside_them(self):
+        self.assertTrue(order.declare(self.root, "s1", order.META, NOTE)[0])
+        self.assertIsNone(order.scope_problem(self.root, "s1", "menq-standard/check_conformance.py"))
+        self.assertIsNone(order.scope_problem(self.root, "s1", ".menq-standard.json"))
+        for near in ("menq-standard-extra/x.py", ".menq-standard.json.bak",
+                     "apps/.menq-standard.json", "apps/menq-standard/x.py", "menq-standard.py"):
+            with self.subTest(path=near):
+                self.assertIsNotNone(order.scope_problem(self.root, "s1", near))
+
     def test_a_numbered_phase_has_no_path_scope(self):
         """Stated rather than faked: a phase's scope is prose, and inventing a path
         list for it would be a check that pretends to know something it does not."""

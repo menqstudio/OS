@@ -1,0 +1,693 @@
+{
+  "schema_version": 1,
+  "derived_by": "tools/sync_session_read_manifest.py from config/canonical-read-manifest.json and config/canon-budget.json; never edited by hand",
+  "total_bytes_max": 350000,
+  "core": [
+    {
+      "path": "NEXT_CHAT.md",
+      "bytes_max": 8500,
+      "why": "A handoff is the current branch, PR, HEAD, blockers and next action."
+    },
+    {
+      "path": "config/owner-contract.md",
+      "bytes_max": 4000,
+      "why": "Injected into EVERY message by the prompt hook, so it competes with the work on every turn."
+    },
+    {
+      "path": "START_HERE.md",
+      "bytes_max": 16000,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes_max": 3500,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "CLAUDE.md",
+      "bytes_max": 19500,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "PROJECT_STATE.md",
+      "bytes_max": 6000,
+      "why": "Was a byte-for-byte copy of NEXT_CHAT.md under a different title when this ceiling was set."
+    },
+    {
+      "path": "TASKS.md",
+      "bytes_max": 7000,
+      "why": "A coordination board is the open tasks and who holds them."
+    },
+    {
+      "path": "OWNERS.md",
+      "bytes_max": 5500,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "bytes_max": 21500,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "MASTER_EXECUTION_ROADMAP.md",
+      "bytes_max": 45500,
+      "why": "41 KB now: §A-§I conventions, the status board and the appendices."
+    },
+    {
+      "path": "apps/desktop/SECURITY.md",
+      "bytes_max": 14000,
+      "why": "Named in config/canonical-read-manifest.json; its ceiling is set in config/canon-budget.json."
+    },
+    {
+      "path": "docs/design/WAVE_3B_ISOLATED_SIGNER_DESIGN.md",
+      "bytes_max": 49000,
+      "why": "44 KB of normative contract, not narrative, and it has not grown."
+    },
+    {
+      "path": "config/current_state.json",
+      "bytes_max": 16000,
+      "why": "110 KB once, of which the `purpose` field alone was 74,311 characters of prose — inside the file called the machine-readable mirror, whose own first sentence..."
+    },
+    {
+      "path": "apps/desktop/AUDIT/AUDIT_LEDGER.md",
+      "bytes_max": 10500,
+      "why": "LOWERED 30000 -> 10500 on 2026-10-01."
+    }
+  ],
+  "areas": {
+    ".": [
+      "QUEUE_MANIFEST.md",
+      "README.md",
+      "SECURITY.md"
+    ],
+    ".claude/agents": [
+      ".claude/agents/accounting-tax--accounting-lead.md",
+      ".claude/agents/accounting-tax--accounting-verifier.md",
+      ".claude/agents/accounting-tax--bookkeeper.md",
+      ".claude/agents/accounting-tax--controls-reviewer.md",
+      ".claude/agents/accounting-tax--tax-analyst.md",
+      ".claude/agents/agent-intelligence-health--agent-health-analyst.md",
+      ".claude/agents/agent-intelligence-health--agent-intelligence-lead.md",
+      ".claude/agents/agent-intelligence-health--agent-intelligence-verifier.md",
+      ".claude/agents/agent-intelligence-health--agent-performance-analyst.md",
+      ".claude/agents/agent-intelligence-health--quality-trend-analyst.md",
+      ".claude/agents/ai-agent-builders--agent-architect.md",
+      ".claude/agents/ai-agent-builders--agent-builder.md",
+      ".claude/agents/ai-agent-builders--evaluation-engineer.md",
+      ".claude/agents/ai-agent-builders--independent-verifier.md",
+      ".claude/agents/ai-agent-builders--tooling-engineer.md",
+      ".claude/agents/architecture-audit--architecture-audit-lead.md",
+      ".claude/agents/architecture-audit--boundary-auditor.md",
+      ".claude/agents/architecture-audit--data-flow-auditor.md",
+      ".claude/agents/architecture-audit--evidence-verifier.md",
+      ".claude/agents/architecture-audit--resilience-auditor.md",
+      ".claude/agents/automation-builders--automation-lead.md",
+      ".claude/agents/automation-builders--automation-verifier.md",
+      ".claude/agents/automation-builders--bot-builder.md",
+      ".claude/agents/automation-builders--integration-engineer.md",
+      ".claude/agents/automation-builders--workflow-engineer.md",
+      ".claude/agents/backend-crafters--api-engineer.md",
+      ".claude/agents/backend-crafters--backend-lead.md",
+      ".claude/agents/backend-crafters--backend-verifier.md",
+      ".claude/agents/backend-crafters--reliability-engineer.md",
+      ".claude/agents/backend-crafters--service-engineer.md",
+      ".claude/agents/builder.md",
+      ".claude/agents/business-strategy--business-analyst.md",
+      ".claude/agents/business-strategy--market-analyst.md",
+      ".claude/agents/business-strategy--operations-strategist.md",
+      ".claude/agents/business-strategy--strategy-lead.md",
+      ".claude/agents/business-strategy--strategy-verifier.md",
+      ".claude/agents/cloud-infrastructure--cloud-lead.md",
+      ".claude/agents/cloud-infrastructure--cloud-verifier.md",
+      ".claude/agents/cloud-infrastructure--cost-engineer.md",
+      ".claude/agents/cloud-infrastructure--iac-engineer.md",
+      ".claude/agents/cloud-infrastructure--infrastructure-engineer.md",
+      ".claude/agents/code-audit--audit-lead.md",
+      ".claude/agents/code-audit--code-auditor.md",
+      ".claude/agents/code-audit--dependency-auditor.md",
+      ".claude/agents/code-audit--evidence-verifier.md",
+      ".claude/agents/code-audit--maintainability-auditor.md",
+      ".claude/agents/control-room-portfolio-status--approval-queue-analyst.md",
+      ".claude/agents/control-room-portfolio-status--control-room-lead.md",
+      ".claude/agents/control-room-portfolio-status--control-room-verifier.md",
+      ".claude/agents/control-room-portfolio-status--portfolio-status-analyst.md",
+      ".claude/agents/control-room-portfolio-status--workload-capacity-analyst.md",
+      ".claude/agents/customer-support-cx--cx-lead.md",
+      ".claude/agents/customer-support-cx--cx-quality-reviewer.md",
+      ".claude/agents/customer-support-cx--escalation-manager.md",
+      ".claude/agents/customer-support-cx--knowledge-specialist.md",
+      ".claude/agents/customer-support-cx--support-specialist.md",
+      ".claude/agents/dashboard-bi-engineering--bi-dashboard-engineer.md",
+      ".claude/agents/dashboard-bi-engineering--dashboard-engineering-lead.md",
+      ".claude/agents/dashboard-bi-engineering--dashboard-verifier.md",
+      ".claude/agents/dashboard-bi-engineering--data-visualization-engineer.md",
+      ".claude/agents/dashboard-bi-engineering--metric-contract-engineer.md",
+      ".claude/agents/data-engineering--data-engineering-lead.md",
+      ".claude/agents/data-engineering--data-quality-engineer.md",
+      ".claude/agents/data-engineering--etl-engineer.md",
+      ".claude/agents/data-engineering--pipeline-engineer.md",
+      ".claude/agents/data-engineering--pipeline-verifier.md",
+      ".claude/agents/data-science-analytics--analytics-lead.md",
+      ".claude/agents/data-science-analytics--analytics-verifier.md",
+      ".claude/agents/data-science-analytics--bi-engineer.md",
+      ".claude/agents/data-science-analytics--data-scientist.md",
+      ".claude/agents/data-science-analytics--experiment-analyst.md",
+      ".claude/agents/database-storage--backup-engineer.md",
+      ".claude/agents/database-storage--data-storage-lead.md",
+      ".claude/agents/database-storage--database-engineer.md",
+      ".claude/agents/database-storage--database-verifier.md",
+      ".claude/agents/database-storage--migration-engineer.md",
+      ".claude/agents/design-systems--component-designer.md",
+      ".claude/agents/design-systems--design-system-lead.md",
+      ".claude/agents/design-systems--documentation-designer.md",
+      ".claude/agents/design-systems--system-verifier.md",
+      ".claude/agents/design-systems--token-architect.md",
+      ".claude/agents/desktop-app-crafters--desktop-lead.md",
+      ".claude/agents/desktop-app-crafters--desktop-verifier.md",
+      ".claude/agents/desktop-app-crafters--native-integration-engineer.md",
+      ".claude/agents/desktop-app-crafters--packaging-engineer.md",
+      ".claude/agents/desktop-app-crafters--tauri-engineer.md",
+      ".claude/agents/devops-platform--ci-engineer.md",
+      ".claude/agents/devops-platform--devops-engineer.md",
+      ".claude/agents/devops-platform--environment-engineer.md",
+      ".claude/agents/devops-platform--platform-lead.md",
+      ".claude/agents/devops-platform--platform-verifier.md",
+      ".claude/agents/documentation-knowledge--documentation-engineer.md",
+      ".claude/agents/documentation-knowledge--information-architect.md",
+      ".claude/agents/documentation-knowledge--knowledge-lead.md",
+      ".claude/agents/documentation-knowledge--knowledge-verifier.md",
+      ".claude/agents/documentation-knowledge--technical-writer.md",
+      ".claude/agents/education-mentoring--curriculum-designer.md",
+      ".claude/agents/education-mentoring--learning-lead.md",
+      ".claude/agents/education-mentoring--learning-verifier.md",
+      ".claude/agents/education-mentoring--mentor.md",
+      ".claude/agents/education-mentoring--teacher.md",
+      ".claude/agents/executive-decision-support--briefing-specialist.md",
+      ".claude/agents/executive-decision-support--decision-lead.md",
+      ".claude/agents/executive-decision-support--decision-verifier.md",
+      ".claude/agents/executive-decision-support--risk-analyst.md",
+      ".claude/agents/executive-decision-support--scenario-analyst.md",
+      ".claude/agents/field-service-dispatch--dispatch-verifier.md",
+      ".claude/agents/field-service-dispatch--dispatcher.md",
+      ".claude/agents/field-service-dispatch--field-operations-lead.md",
+      ".claude/agents/field-service-dispatch--field-technician-planner.md",
+      ".claude/agents/field-service-dispatch--sla-analyst.md",
+      ".claude/agents/finance-pricing--finance-lead.md",
+      ".claude/agents/finance-pricing--finance-verifier.md",
+      ".claude/agents/finance-pricing--financial-analyst.md",
+      ".claude/agents/finance-pricing--pricing-strategist.md",
+      ".claude/agents/finance-pricing--unit-economics-analyst.md",
+      ".claude/agents/frontend-crafters--accessibility-engineer.md",
+      ".claude/agents/frontend-crafters--frontend-lead.md",
+      ".claude/agents/frontend-crafters--frontend-verifier.md",
+      ".claude/agents/frontend-crafters--performance-engineer.md",
+      ".claude/agents/frontend-crafters--ui-engineer.md",
+      ".claude/agents/git-release-control--integration-lead.md",
+      ".claude/agents/git-release-control--push-executor.md",
+      ".claude/agents/git-release-control--release-verifier.md",
+      ".claude/agents/git-release-control--rollback-coordinator.md",
+      ".claude/agents/growth-retention--experiment-manager.md",
+      ".claude/agents/growth-retention--growth-lead.md",
+      ".claude/agents/growth-retention--growth-verifier.md",
+      ".claude/agents/growth-retention--lifecycle-strategist.md",
+      ".claude/agents/growth-retention--retention-analyst.md",
+      ".claude/agents/hr-workforce-training--hr-specialist.md",
+      ".claude/agents/hr-workforce-training--people-lead.md",
+      ".claude/agents/hr-workforce-training--people-operations-verifier.md",
+      ".claude/agents/hr-workforce-training--training-designer.md",
+      ".claude/agents/hr-workforce-training--workforce-planner.md",
+      ".claude/agents/incident-recovery--continuity-engineer.md",
+      ".claude/agents/incident-recovery--forensics-analyst.md",
+      ".claude/agents/incident-recovery--incident-lead.md",
+      ".claude/agents/incident-recovery--recovery-engineer.md",
+      ".claude/agents/incident-recovery--recovery-verifier.md",
+      ".claude/agents/integration-api--api-engineer.md",
+      ".claude/agents/integration-api--connector-engineer.md",
+      ".claude/agents/integration-api--contract-tester.md",
+      ".claude/agents/integration-api--integration-lead.md",
+      ".claude/agents/integration-api--integration-verifier.md",
+      ".claude/agents/language-localization--language-lead.md",
+      ".claude/agents/language-localization--language-verifier.md",
+      ".claude/agents/language-localization--localization-engineer.md",
+      ".claude/agents/language-localization--terminology-reviewer.md",
+      ".claude/agents/language-localization--translator.md",
+      ".claude/agents/legal-compliance--compliance-lead.md",
+      ".claude/agents/legal-compliance--compliance-verifier.md",
+      ".claude/agents/legal-compliance--contract-reviewer.md",
+      ".claude/agents/legal-compliance--legal-analyst.md",
+      ".claude/agents/legal-compliance--regulatory-analyst.md",
+      ".claude/agents/llm-ml-engineering--llm-engineer.md",
+      ".claude/agents/llm-ml-engineering--llmops-engineer.md",
+      ".claude/agents/llm-ml-engineering--ml-lead.md",
+      ".claude/agents/llm-ml-engineering--model-evaluator.md",
+      ".claude/agents/llm-ml-engineering--safety-verifier.md",
+      ".claude/agents/marketing-brand--brand-strategist.md",
+      ".claude/agents/marketing-brand--campaign-analyst.md",
+      ".claude/agents/marketing-brand--content-marketer.md",
+      ".claude/agents/marketing-brand--marketing-lead.md",
+      ".claude/agents/marketing-brand--marketing-reviewer.md",
+      ".claude/agents/mobile-app-crafters--mobile-engineer.md",
+      ".claude/agents/mobile-app-crafters--mobile-lead.md",
+      ".claude/agents/mobile-app-crafters--mobile-verifier.md",
+      ".claude/agents/mobile-app-crafters--platform-integration-engineer.md",
+      ".claude/agents/mobile-app-crafters--release-engineer.md",
+      ".claude/agents/motion-interaction--animation-engineer.md",
+      ".claude/agents/motion-interaction--interaction-designer.md",
+      ".claude/agents/motion-interaction--motion-lead.md",
+      ".claude/agents/motion-interaction--motion-verifier.md",
+      ".claude/agents/motion-interaction--usability-reviewer.md",
+      ".claude/agents/noc-network-ops--incident-coordinator.md",
+      ".claude/agents/noc-network-ops--monitoring-specialist.md",
+      ".claude/agents/noc-network-ops--network-engineer.md",
+      ".claude/agents/noc-network-ops--noc-lead.md",
+      ".claude/agents/noc-network-ops--noc-verifier.md",
+      ".claude/agents/operations-process--automation-coordinator.md",
+      ".claude/agents/operations-process--operations-lead.md",
+      ".claude/agents/operations-process--operations-verifier.md",
+      ".claude/agents/operations-process--process-analyst.md",
+      ".claude/agents/operations-process--quality-controller.md",
+      ".claude/agents/procurement-partnerships--channel-manager.md",
+      ".claude/agents/procurement-partnerships--commercial-verifier.md",
+      ".claude/agents/procurement-partnerships--partnership-lead.md",
+      ".claude/agents/procurement-partnerships--procurement-specialist.md",
+      ".claude/agents/procurement-partnerships--vendor-analyst.md",
+      ".claude/agents/product-management--discovery-analyst.md",
+      ".claude/agents/product-management--product-lead.md",
+      ".claude/agents/product-management--product-operations.md",
+      ".claude/agents/product-management--product-verifier.md",
+      ".claude/agents/product-management--requirements-manager.md",
+      ".claude/agents/project-program-management--delivery-coordinator.md",
+      ".claude/agents/project-program-management--delivery-verifier.md",
+      ".claude/agents/project-program-management--program-lead.md",
+      ".claude/agents/project-program-management--project-manager.md",
+      ".claude/agents/project-program-management--risk-manager.md",
+      ".claude/agents/reader.md",
+      ".claude/agents/red-team-offensive-security--attack-surface-analyst.md",
+      ".claude/agents/red-team-offensive-security--exploit-validator.md",
+      ".claude/agents/red-team-offensive-security--offensive-security-tester.md",
+      ".claude/agents/red-team-offensive-security--red-team-lead.md",
+      ".claude/agents/red-team-offensive-security--safety-verifier.md",
+      ".claude/agents/research-analysis--analyst.md",
+      ".claude/agents/research-analysis--research-lead.md",
+      ".claude/agents/research-analysis--researcher.md",
+      ".claude/agents/research-analysis--source-verifier.md",
+      ".claude/agents/research-analysis--synthesis-reviewer.md",
+      ".claude/agents/runner.md",
+      ".claude/agents/sales-revenue--account-executive.md",
+      ".claude/agents/sales-revenue--revenue-operations.md",
+      ".claude/agents/sales-revenue--sales-engineer.md",
+      ".claude/agents/sales-revenue--sales-lead.md",
+      ".claude/agents/sales-revenue--sales-quality-reviewer.md",
+      ".claude/agents/security-audit--application-security-auditor.md",
+      ".claude/agents/security-audit--evidence-verifier.md",
+      ".claude/agents/security-audit--identity-auditor.md",
+      ".claude/agents/security-audit--secrets-auditor.md",
+      ".claude/agents/security-audit--security-audit-lead.md",
+      ".claude/agents/software-architecture--api-architect.md",
+      ".claude/agents/software-architecture--architecture-lead.md",
+      ".claude/agents/software-architecture--architecture-verifier.md",
+      ".claude/agents/software-architecture--integration-architect.md",
+      ".claude/agents/software-architecture--systems-architect.md",
+      ".claude/agents/sre-reliability--capacity-engineer.md",
+      ".claude/agents/sre-reliability--observability-engineer.md",
+      ".claude/agents/sre-reliability--reliability-engineer.md",
+      ".claude/agents/sre-reliability--sre-lead.md",
+      ".claude/agents/sre-reliability--sre-verifier.md",
+      ".claude/agents/supply-chain-inventory--inventory-analyst.md",
+      ".claude/agents/supply-chain-inventory--procurement-planner.md",
+      ".claude/agents/supply-chain-inventory--supply-chain-lead.md",
+      ".claude/agents/supply-chain-inventory--supply-chain-verifier.md",
+      ".claude/agents/supply-chain-inventory--warehouse-analyst.md",
+      ".claude/agents/system-observability-analytics--bottleneck-analyst.md",
+      ".claude/agents/system-observability-analytics--observability-analytics-lead.md",
+      ".claude/agents/system-observability-analytics--observability-verifier.md",
+      ".claude/agents/system-observability-analytics--reliability-data-analyst.md",
+      ".claude/agents/system-observability-analytics--system-health-analyst.md",
+      ".claude/agents/telecom-isp--isp-operations-specialist.md",
+      ".claude/agents/telecom-isp--network-architect.md",
+      ".claude/agents/telecom-isp--service-assurance-analyst.md",
+      ".claude/agents/telecom-isp--telecom-lead.md",
+      ".claude/agents/telecom-isp--telecom-verifier.md",
+      ".claude/agents/testing-quality--automation-tester.md",
+      ".claude/agents/testing-quality--mutation-tester.md",
+      ".claude/agents/testing-quality--qa-lead.md",
+      ".claude/agents/testing-quality--quality-verifier.md",
+      ".claude/agents/testing-quality--test-engineer.md",
+      ".claude/agents/ui-ux-design--accessibility-designer.md",
+      ".claude/agents/ui-ux-design--design-lead.md",
+      ".claude/agents/ui-ux-design--design-verifier.md",
+      ".claude/agents/ui-ux-design--ui-designer.md",
+      ".claude/agents/ui-ux-design--ux-researcher.md",
+      ".claude/agents/zero-trust-verification--independent-verifier.md",
+      ".claude/agents/zero-trust-verification--mutation-engineer.md",
+      ".claude/agents/zero-trust-verification--policy-auditor.md",
+      ".claude/agents/zero-trust-verification--recovery-verifier.md",
+      ".claude/agents/zero-trust-verification--zero-trust-lead.md"
+    ],
+    ".github": [
+      ".github/pull_request_template.md"
+    ],
+    ".github/supply-chain": [
+      ".github/supply-chain/README.md"
+    ],
+    "apps/desktop": [
+      "apps/desktop/CHANGELOG.md",
+      "apps/desktop/README.md"
+    ],
+    "apps/desktop/AUDIT": [
+      "apps/desktop/AUDIT/2026-08-06-consolidated-index.md",
+      "apps/desktop/AUDIT/2026-08-06-independent-audit.md",
+      "apps/desktop/AUDIT/2026-08-06-remediation-audit.md",
+      "apps/desktop/AUDIT/2026-08-14-zero-trust-audit-e0dd969.md",
+      "apps/desktop/AUDIT/2026-08-15-zero-trust-reaudit-0a9a1af.md",
+      "apps/desktop/AUDIT/2026-08-17-seventh-audit-491f923.md",
+      "apps/desktop/AUDIT/2026-08-17-sixth-audit-b16e572.md",
+      "apps/desktop/AUDIT/2026-08-18-eighth-audit-9ae2fd2.md",
+      "apps/desktop/AUDIT/2026-08-19-ninth-audit-5cf9b8c.md",
+      "apps/desktop/AUDIT/2026-09-19-tenth-audit-75fca65.md",
+      "apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md",
+      "apps/desktop/AUDIT/AUDIT_LEDGER_ARCHIVE.md"
+    ],
+    "apps/desktop/AUDIT/changes": [
+      "apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-2.md",
+      "apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-3.md",
+      "apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock-round-4.md",
+      "apps/desktop/AUDIT/changes/pr-328-audit-ledger-lock.md",
+      "apps/desktop/AUDIT/changes/pr-328-windows-run-relayed.md",
+      "apps/desktop/AUDIT/changes/pr-333-shell-classifier.md",
+      "apps/desktop/AUDIT/changes/pr-336-cryptography-50.md"
+    ],
+    "apps/desktop/docs": [
+      "apps/desktop/docs/DECISIONS.md",
+      "apps/desktop/docs/IMPLEMENTATION_EXECUTION_HANDOFF.md",
+      "apps/desktop/docs/PRINCIPLES.md",
+      "apps/desktop/docs/PROJECT_CONTEXT.md",
+      "apps/desktop/docs/SUCCESS_CRITERIA.md",
+      "apps/desktop/docs/TERMINOLOGY.md"
+    ],
+    "apps/desktop/docs/architecture": [
+      "apps/desktop/docs/architecture/AI_RUNTIME.md",
+      "apps/desktop/docs/architecture/AI_RUNTIME_CONTRACTS.md",
+      "apps/desktop/docs/architecture/ARCHITECTURE.md",
+      "apps/desktop/docs/architecture/DATABASE_SCHEMA.md",
+      "apps/desktop/docs/architecture/DATA_MODEL.md",
+      "apps/desktop/docs/architecture/DESIGN_SYSTEM.md",
+      "apps/desktop/docs/architecture/DESKTOP_ARCHITECTURE.md",
+      "apps/desktop/docs/architecture/MENQ_STUDIO_DESIGN_STANDARD_ADOPTION.md",
+      "apps/desktop/docs/architecture/NOTIFICATIONS_AND_PERMISSIONS.md",
+      "apps/desktop/docs/architecture/UX_UI_SPEC.md"
+    ],
+    "apps/desktop/docs/product": [
+      "apps/desktop/docs/product/AGENT_FLOWS.md",
+      "apps/desktop/docs/product/CHAT_FLOWS.md",
+      "apps/desktop/docs/product/DECISION_APPROVAL_FLOWS.md",
+      "apps/desktop/docs/product/DETAILED_UX_UI_SPEC.md",
+      "apps/desktop/docs/product/GROUP_CHAT.md",
+      "apps/desktop/docs/product/INFORMATION_ARCHITECTURE.md",
+      "apps/desktop/docs/product/NAVIGATION.md",
+      "apps/desktop/docs/product/PROJECT_TASK_FLOWS.md",
+      "apps/desktop/docs/product/SCREEN_INVENTORY.md",
+      "apps/desktop/docs/product/SEARCH_AND_COMMAND_PALETTE.md",
+      "apps/desktop/docs/product/STATES.md",
+      "apps/desktop/docs/product/USER_FLOWS.md",
+      "apps/desktop/docs/product/WORKSPACES.md",
+      "apps/desktop/docs/product/WORKSPACE_FLOWS.md"
+    ],
+    "apps/desktop/src-tauri": [
+      "apps/desktop/src-tauri/README.md"
+    ],
+    "apps/desktop/src-tauri/win-live": [
+      "apps/desktop/src-tauri/win-live/WINDOWS_ANTIROLLBACK_HARDENING.md",
+      "apps/desktop/src-tauri/win-live/WIRING_LIVE_TRUST.md"
+    ],
+    "apps/desktop/src-tauri/win-live/proof": [
+      "apps/desktop/src-tauri/win-live/proof/BUILDER_AUDIT_VERDICT_2026-08-04.md",
+      "apps/desktop/src-tauri/win-live/proof/CROSS_ACCOUNT_PROOF.md",
+      "apps/desktop/src-tauri/win-live/proof/WINDOWS_BROKER_AUDIT_VERDICT.md"
+    ],
+    "bridge": [
+      "bridge/DESIGN.md",
+      "bridge/README.md"
+    ],
+    "contracts": [
+      "contracts/README.md"
+    ],
+    "docs": [
+      "docs/BRIDGE_SIDECAR_OP_PROTOCOL.md",
+      "docs/BRO_DELEGATION_EVIDENCE.md",
+      "docs/DEBIAN_DEPLOYMENT.md",
+      "docs/DEBIAN_LINUX_CONTINUATION.md",
+      "docs/DESIGN_SYSTEM.md",
+      "docs/EVIDENCE_2026-08-30_CROSS_CHECK.md",
+      "docs/EVIDENCE_BASH_GAP.md",
+      "docs/EVIDENCE_INDEX.md",
+      "docs/NEGATIVE_MATRIX_TRIAGE_2026-09-19.md",
+      "docs/OPERATOR_GUIDE.md",
+      "docs/OVERNIGHT_QUEUE_2026-08-31.md",
+      "docs/OWNER_ACTION_REQUIRED.md",
+      "docs/PHASE_10_PRODUCTION_ITEMS.md",
+      "docs/QUEUES_1_AND_2_REPORT.md",
+      "docs/REACHABILITY_GATE.md",
+      "docs/README_CLAIM_HISTORY.md",
+      "docs/RELEASE_SETUP.md",
+      "docs/REPO_STALENESS_SWEEP_2026-08-08.md",
+      "docs/SECURITY_MODEL.md",
+      "docs/TROUBLESHOOTING.md",
+      "docs/USER_GUIDE.md",
+      "docs/VERIFICATION_QUEUE_1.md",
+      "docs/WHOLE_REPO_READ_2026-10-01.md",
+      "docs/WHOLE_REPO_READ_2026-10-02.md",
+      "docs/WHOLE_REPO_READ_2026-10-02_COCKPIT.md"
+    ],
+    "docs/archive": [
+      "docs/archive/CLAUDE_2026-08-29_before_T-045.md",
+      "docs/archive/SESSION_LOG_2026-07_2026-08.md",
+      "docs/archive/TASKS_ARCHIVE_2026-08.md",
+      "docs/archive/TASKS_ARCHIVE_2026-09.md",
+      "docs/archive/roadmap-evidence.md"
+    ],
+    "docs/brand": [
+      "docs/brand/README.md"
+    ],
+    "docs/design": [
+      "docs/design/CONTRACTS_DEDUPE_PLAN.md",
+      "docs/design/DEBIAN_INSTALL_PROVISIONING.md",
+      "docs/design/FLOOR_WRITER_SERVICE_DESIGN.md",
+      "docs/design/OWNER_COMMAND_PATH_DESIGN.md",
+      "docs/design/OWNER_COMMAND_PATH_REVIEW.md",
+      "docs/design/PHASE2_GOVERN_AI_SURFACES_DESIGN.md",
+      "docs/design/PR32_REBASE_MAP_REV28.md",
+      "docs/design/PRODUCTION_HALF_DESIGN.md",
+      "docs/design/SECURITY_NEGATIVE_TEST_MATRIX.md",
+      "docs/design/SHELL_CLASSIFIER_DESIGN.md",
+      "docs/design/T-010_INBODY_AUDIT.md",
+      "docs/design/T-011_SELF_AUDIT.md",
+      "docs/design/T-021_SCHEMA_AUDIT.md",
+      "docs/design/T-156_AUDIT_LEDGER_LOCK_AUDIT_REQUEST.md",
+      "docs/design/T-159_IMPLEMENTATION_QUESTIONS.md",
+      "docs/design/T-159_SHELL_CLASSIFIER_AUDIT_REQUEST.md",
+      "docs/design/T-165_CRYPTOGRAPHY_50_AUDIT_REQUEST.md",
+      "docs/design/WAVE_2B_CAPABILITY_APPROVAL_DESIGN.md",
+      "docs/design/WAVE_3B1B_EXECUTION_BINDING_ADDENDUM.md",
+      "docs/design/WAVE_3B1B_IMPL_CODE_AUDIT_REQUEST.md",
+      "docs/design/WAVE_3B1_EXECUTION_BINDING_MAP.md",
+      "docs/design/WAVE_3_RECEIPT_PROTOCOL_V1_DESIGN.md",
+      "docs/design/WINDOWS_BROKER_DESIGN.md",
+      "docs/design/WINDOWS_BROKER_IMPL_PLAN.md"
+    ],
+    "docs/roadmap": [
+      "docs/roadmap/phase-0.md",
+      "docs/roadmap/phase-1.md",
+      "docs/roadmap/phase-10.md",
+      "docs/roadmap/phase-2.md",
+      "docs/roadmap/phase-3.md",
+      "docs/roadmap/phase-4.md",
+      "docs/roadmap/phase-5.md",
+      "docs/roadmap/phase-6.md",
+      "docs/roadmap/phase-7.md",
+      "docs/roadmap/phase-8.md",
+      "docs/roadmap/phase-9.md"
+    ],
+    "engine": [
+      "engine/README.md"
+    ],
+    "engine/AUDIT": [
+      "engine/AUDIT/BroCore_Audit_Report.md",
+      "engine/AUDIT/README.md"
+    ],
+    "engine/AUDIT/tickets": [
+      "engine/AUDIT/tickets/C-1-find-readonly-bypass.md",
+      "engine/AUDIT/tickets/H-1-unsigned-workspace-binding.md",
+      "engine/AUDIT/tickets/H-2-windows-emit-crash.md",
+      "engine/AUDIT/tickets/H-3-windows-fail-open-wiring.md",
+      "engine/AUDIT/tickets/H-4-forgeable-audit-trail.md",
+      "engine/AUDIT/tickets/H-5-registry-anti-rollback.md",
+      "engine/AUDIT/tickets/H-6-protected-set-gaps.md",
+      "engine/AUDIT/tickets/LOW-findings.md",
+      "engine/AUDIT/tickets/MEDIUM-findings.md"
+    ],
+    "engine/agents": [
+      "engine/agents/README.md"
+    ],
+    "engine/docs": [
+      "engine/docs/ANALYTICS_CONTROL_PLANE.md",
+      "engine/docs/ARCHITECTURE.md",
+      "engine/docs/CONTROL_ROOM_API_V1_SPEC.md",
+      "engine/docs/DELEGATION_AND_SKILLS.md",
+      "engine/docs/EXECUTION_CONTROL_PLANE_V2_SPEC.md",
+      "engine/docs/GIT_RELEASE_CONTROL.md",
+      "engine/docs/OPERATING_MODES.md",
+      "engine/docs/OPERATOR_RUNBOOK.md",
+      "engine/docs/ORCHESTRATION_CONTROL_ROOM_V1_SPEC.md",
+      "engine/docs/ORCHESTRATION_RUNTIME_V1_SPEC.md",
+      "engine/docs/REPOSITORY_LAYOUT.md",
+      "engine/docs/SECURITY_MODEL.md"
+    ],
+    "engine/laws": [
+      "engine/laws/LAW_INDEX.md"
+    ],
+    "engine/packs": [
+      "engine/packs/README.md"
+    ],
+    "engine/skills": [
+      "engine/skills/README.md"
+    ],
+    "engine/skills/accounting-bookkeeping-tax": [
+      "engine/skills/accounting-bookkeeping-tax/SKILL.md"
+    ],
+    "engine/skills/ai-agent-engineering": [
+      "engine/skills/ai-agent-engineering/SKILL.md"
+    ],
+    "engine/skills/ai-ml-engineering-llmops": [
+      "engine/skills/ai-ml-engineering-llmops/SKILL.md"
+    ],
+    "engine/skills/analysis-primary": [
+      "engine/skills/analysis-primary/SKILL.md"
+    ],
+    "engine/skills/auditing": [
+      "engine/skills/auditing/SKILL.md"
+    ],
+    "engine/skills/business-strategy-operations": [
+      "engine/skills/business-strategy-operations/SKILL.md"
+    ],
+    "engine/skills/communication-writing-negotiation": [
+      "engine/skills/communication-writing-negotiation/SKILL.md"
+    ],
+    "engine/skills/creativity-ideation-design-thinking": [
+      "engine/skills/creativity-ideation-design-thinking/SKILL.md"
+    ],
+    "engine/skills/customer-support-cx-ops": [
+      "engine/skills/customer-support-cx-ops/SKILL.md"
+    ],
+    "engine/skills/cybersecurity-operations-soc": [
+      "engine/skills/cybersecurity-operations-soc/SKILL.md"
+    ],
+    "engine/skills/data-architecture-leadership": [
+      "engine/skills/data-architecture-leadership/SKILL.md"
+    ],
+    "engine/skills/data-engineering-pipelines": [
+      "engine/skills/data-engineering-pipelines/SKILL.md"
+    ],
+    "engine/skills/data-science-analytics": [
+      "engine/skills/data-science-analytics/SKILL.md"
+    ],
+    "engine/skills/databases-storage-engineering": [
+      "engine/skills/databases-storage-engineering/SKILL.md"
+    ],
+    "engine/skills/devops-platform-sre": [
+      "engine/skills/devops-platform-sre/SKILL.md"
+    ],
+    "engine/skills/economics-market-design": [
+      "engine/skills/economics-market-design/SKILL.md"
+    ],
+    "engine/skills/field-service-dispatch-ops": [
+      "engine/skills/field-service-dispatch-ops/SKILL.md"
+    ],
+    "engine/skills/finance-unit-economics": [
+      "engine/skills/finance-unit-economics/SKILL.md"
+    ],
+    "engine/skills/frontend-ux-product-design": [
+      "engine/skills/frontend-ux-product-design/SKILL.md"
+    ],
+    "engine/skills/hr-compensation-design": [
+      "engine/skills/hr-compensation-design/SKILL.md"
+    ],
+    "engine/skills/language-mastery": [
+      "engine/skills/language-mastery/SKILL.md"
+    ],
+    "engine/skills/legal-compliance-contracts": [
+      "engine/skills/legal-compliance-contracts/SKILL.md"
+    ],
+    "engine/skills/marketing-brand": [
+      "engine/skills/marketing-brand/SKILL.md"
+    ],
+    "engine/skills/mobile-engineering": [
+      "engine/skills/mobile-engineering/SKILL.md"
+    ],
+    "engine/skills/offensive-security-pentesting": [
+      "engine/skills/offensive-security-pentesting/SKILL.md"
+    ],
+    "engine/skills/operating-data-roles": [
+      "engine/skills/operating-data-roles/SKILL.md"
+    ],
+    "engine/skills/partnership-channel-bd": [
+      "engine/skills/partnership-channel-bd/SKILL.md"
+    ],
+    "engine/skills/people-org-leadership": [
+      "engine/skills/people-org-leadership/SKILL.md"
+    ],
+    "engine/skills/pricing-packaging-strategy": [
+      "engine/skills/pricing-packaging-strategy/SKILL.md"
+    ],
+    "engine/skills/procurement-vendor-negotiation": [
+      "engine/skills/procurement-vendor-negotiation/SKILL.md"
+    ],
+    "engine/skills/product-project-management": [
+      "engine/skills/product-project-management/SKILL.md"
+    ],
+    "engine/skills/regulatory-telecom-licensing": [
+      "engine/skills/regulatory-telecom-licensing/SKILL.md"
+    ],
+    "engine/skills/research-knowledge-synthesis": [
+      "engine/skills/research-knowledge-synthesis/SKILL.md"
+    ],
+    "engine/skills/sales-revenue-growth": [
+      "engine/skills/sales-revenue-growth/SKILL.md"
+    ],
+    "engine/skills/security-privacy-engineering": [
+      "engine/skills/security-privacy-engineering/SKILL.md"
+    ],
+    "engine/skills/software-systems-architecture": [
+      "engine/skills/software-systems-architecture/SKILL.md"
+    ],
+    "engine/skills/supply-chain-inventory": [
+      "engine/skills/supply-chain-inventory/SKILL.md"
+    ],
+    "engine/skills/teaching-mentoring-knowledge-transfer": [
+      "engine/skills/teaching-mentoring-knowledge-transfer/SKILL.md"
+    ],
+    "engine/skills/telecom-isp-network-ops": [
+      "engine/skills/telecom-isp-network-ops/SKILL.md"
+    ],
+    "engine/skills/testing-quality-engineering": [
+      "engine/skills/testing-quality-engineering/SKILL.md"
+    ],
+    "engine/skills/ui-page-structure-design": [
+      "engine/skills/ui-page-structure-design/SKILL.md"
+    ],
+    "engine/skills/workforce-scheduling-wfm": [
+      "engine/skills/workforce-scheduling-wfm/SKILL.md"
+    ],
+    "menq-standard": [
+      "menq-standard/ADOPTION.md",
+      "menq-standard/CONSUMER_CONTRACT.md",
+      "menq-standard/SYNC_FACTS.md"
+    ],
+    "tools": [
+      "tools/SYNC_FACTS.md"
+    ],
+    "tools/fixtures": [
+      "tools/fixtures/roadmap-pre-split.md"
+    ]
+  }
+}

@@ -1,0 +1,110 @@
+# MenQ Standard update (decision D-029).
+# RENDERED from the kit template templates/menq-standard-update.yml by
+# `check_conformance.py install --with-update-workflow`; the pin records its hash. Do not edit.
+#
+# Weekly and on demand: fetch the standard, compare it with the pin, and when the pin is behind
+# open ONE pull request that updates the kit and the pin. It never merges and never approves.
+#
+# It needs, in THIS repository:
+#   Settings -> Actions -> General -> Workflow permissions ->
+#     "Allow GitHub Actions to create and approve pull requests"   (ON)
+#   and the two permissions below. That is why it is a file of this repository and not something
+#   the standard runs: the standard has no write access to a product repository and must not.
+#
+# It changes the kit directory and the pin only. It never writes under .github/workflows/: an
+# Actions token is refused there. When a workflow template changed, the pull request says so and
+# a person re-renders it.
+name: MenQ Standard Update
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: menq-standard-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Fetch MenQ Standard (public, no token)
+        run: git clone --quiet https://github.com/menqstudio/MenQ-Standard.git "$RUNNER_TEMP/menq-standard"
+      - name: Update the kit and open a pull request when the pin is behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          standard="$RUNNER_TEMP/menq-standard"
+          checker="__MENQ_KIT_DIR__/check_conformance.py"
+          report="$RUNNER_TEMP/menq-standard-update"
+          mkdir -p "$report"
+
+          code=0
+          python "$checker" status --standard "$standard" --standard-ref origin/main > "$report/status.txt" || code=$?
+          cat "$report/status.txt"
+          if [ "$code" -eq 0 ]; then
+            echo "The pin is current. Nothing to do."
+            exit 0
+          fi
+          if [ "$code" -ne 10 ]; then
+            echo "status is RED (exit $code). No update is attempted."
+            exit 1
+          fi
+
+          old="$(python -c 'import json; print(json.load(open(".menq-standard.json", encoding="utf-8"))["standard"]["version"])')"
+          python "$checker" changelog --standard "$standard" --standard-ref origin/main --since "$old" > "$report/changelog.md"
+          python "$checker" install --standard "$standard" --standard-ref origin/main
+          new="$(python -c 'import json; print(json.load(open(".menq-standard.json", encoding="utf-8"))["standard"]["version"])')"
+
+          branch="menq-standard/update-$new"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "Branch $branch already exists: this update was already proposed. Nothing is pushed."
+            exit 0
+          fi
+
+          verdict=0
+          python "$checker" check --standard "$standard" --standard-ref origin/main > "$report/check.txt" || verdict=$?
+          cat "$report/check.txt"
+
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --quiet -b "$branch"
+          git add --all
+          git commit --quiet --message "MenQ Standard $old -> $new"
+          git push --quiet origin "$branch"
+
+          {
+            echo "MenQ Standard moved from $old to $new. This pull request updates the kit and the pin."
+            echo
+            echo "It was opened by the scheduled update workflow. Nothing merges it: a person reviews and merges."
+            echo "A pull request opened by an Actions token does not start this repository's own workflows."
+            echo "Run the MenQ Standard Conformance workflow on this branch by hand, or close and reopen this pull request."
+            echo
+            echo "## What differs"
+            echo
+            echo '```text'
+            cat "$report/status.txt"
+            echo '```'
+            echo
+            echo "## Conformance on this branch, as run by the update job (exit $verdict)"
+            echo
+            echo '```text'
+            cat "$report/check.txt"
+            echo '```'
+            echo
+            echo "## What changed in the standard"
+            echo
+            cat "$report/changelog.md"
+          } > "$report/body.md"
+          gh pr create --base "$base" --head "$branch" --title "MenQ Standard $old -> $new" --body-file "$report/body.md"

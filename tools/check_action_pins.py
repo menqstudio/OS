@@ -25,6 +25,8 @@ Exit 0 = consistent. Exit 1 = a violation. No other outcome.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import re
 import sys
@@ -134,6 +136,41 @@ def unparseable_workflows(root: pathlib.Path) -> list[str]:
     return problems
 
 
+#: MenQ Standard's pin (T-171). It records, for each workflow the standard RENDERED into this
+#: repository, the sha256 of that file's bytes.
+STANDARD_PIN = ".menq-standard.json"
+
+
+def standard_rendered_workflows(root: pathlib.Path) -> set[str]:
+    """Dispatched workflows whose bytes are exactly what the standard's pin records.
+
+    Such a file is not written here: `check_conformance.py install` renders it from the
+    standard's template, and the conformance workflow compares its hash with the standard's own.
+    Its action pins are therefore the STANDARD's choices, made once for ten repositories, and
+    rules 2 and 3 -- a version comment, and one version per action across THIS repository --
+    cannot be satisfied by editing it, because an edited file no longer matches its pin. Rules
+    1 and 4 still apply: a floating tag or a cross-claimed commit is wrong whoever wrote it.
+
+    The exemption is bound to the bytes. A file the pin names but whose hash differs gets none.
+    """
+    try:
+        pin = json.loads((root / STANDARD_PIN).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    workflows = pin.get("workflows") if isinstance(pin, dict) else None
+    if not isinstance(workflows, dict):
+        return set()
+    rendered: set[str] = set()
+    for rel, record in workflows.items():
+        path = root / rel
+        if not isinstance(record, dict) or not path.is_file():
+            continue
+        found = hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        if found == record.get("sha256"):
+            rendered.add(pathlib.PurePosixPath(rel).as_posix())
+    return rendered
+
+
 def check(root: pathlib.Path) -> list[str]:
     # A workflow that does not parse does not run, and GitHub does not say so — see
     # `unparseable_workflows`. Checked FIRST, because every rule below reads these same files and
@@ -142,6 +179,7 @@ def check(root: pathlib.Path) -> list[str]:
     seen_any = False
     by_action: dict[str, set[tuple[str, str]]] = defaultdict(set)
     where: dict[tuple[str, str], list[str]] = defaultdict(list)
+    from_standard = standard_rendered_workflows(root)
 
     # ---- rules 1–3, over the workflows GitHub actually dispatches ----
     for rel, lineno, action, ref, comment in _iter_uses(root, DISPATCHED_GLOBS):
@@ -158,6 +196,8 @@ def check(root: pathlib.Path) -> list[str]:
                 f"(add a SHA pin, or declare the exception in FLOATING_ALLOWED with a reason)"
             )
             continue
+        if pathlib.PurePosixPath(str(rel).replace("\\", "/")).as_posix() in from_standard:
+            continue  # rules 2 and 3 are the standard's to keep; see standard_rendered_workflows
         if not comment:
             problems.append(
                 f"{site}: {action}@{ref[:12]}… has no trailing `# <version>` comment — a SHA "
