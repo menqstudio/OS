@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `f082e74`.** PR #390 on `k-08-failed-step-fails-run` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `c580011`.** PR #391 on `k-10-engine-test-env` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-169 redesign; K-01 and K-09 need a decision; K-10.
+> **Next:** T-169 redesign; K-01 and K-09 need a decision.
 >
 > **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -57,7 +57,7 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 ## Standing risks
 
 **RED is the independent verdict** — the ELEVENTH round, `main` at `e3fc507`, no P0, four P1
-(`K-02`–`K-06`, `K-08` fixed ◑; four open). Everything merged after that head is ◑.
+(open: `K-01`, `K-07`, `K-09`; rest ◑). Everything merged after that head is ◑.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
@@ -75,7 +75,7 @@ All 35 contexts in `config/required-checks.json` are required on `main`, with `s
 on this plan a private repository carries no protection, and going private deletes the rules.
 
 **The `.deb` was installed here 2026-10-09** and runs: mirrors granted, self-test on Linux,
-governed turn refused (OWNER 2h). `T-169`'s design was REJECTED. `tools/sync_facts.py` writes repeated facts (`T-171`). OS follows MenQ Standard 2.0.0.
+governed turn refused (OWNER 2h). `T-169`'s design was REJECTED. `tools/sync_facts.py` writes repeated facts; OS follows MenQ Standard 2.0.0 (`T-171`).
 
 **Two audit reports went missing, one unrecoverable** — the fifth never filed (15 promotions not
 carried), the seventh reconstructed from two commit messages. `A-06` in the ledger.

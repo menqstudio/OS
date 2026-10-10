@@ -969,6 +969,11 @@ jobs:
       # OS adopted MenQ Standard (T-171). The standard reads the session read through its own
       # manifest schema; ours is DERIVED from canonical-read-manifest.json and canon-budget.json, so
       # this is RED when either moved, or a Markdown file was added, and the derived file did not.
+      # Audit K-10: the counted engine-suite claim failed in a sandbox with no AF_UNIX bind and a
+      # foreign-owned temp directory, and nothing said so before the run. This says, here, whether
+      # the count is expected -- and prints the uid and platform it is saying it for.
+      - name: The counted engine-suite claim is expected in this environment
+        run: python tools/check_engine_test_env.py
       - name: The standard's session-read manifest is what our two read configs give
         run: python tools/sync_session_read_manifest.py --check
       # An assumption may not enter the record dressed as a fact. Either settle it and write
@@ -1014,6 +1019,7 @@ jobs:
           python -m unittest test_check_doc_claims
           python -m unittest test_sync_facts
           python -m unittest test_sync_session_read_manifest
+          python -m unittest test_check_engine_test_env
           python -m unittest test_check_recommendation
           python -m unittest test_check_truncated_lines
           python -m unittest test_roadmap_split

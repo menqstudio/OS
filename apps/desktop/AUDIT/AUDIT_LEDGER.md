@@ -68,7 +68,7 @@ Filed at `e3fc507`. Open unless the row says otherwise; the report has the repro
 | `K-07` | P2 | **Signer store corruption raises instead of refusing** — OWNER item 5, now with a reproduction. Signs nothing. | 🔴 Open, engine security code |
 | `K-08` | P2 | **A failed run step does not fail the run**; the next pending step stays claimable. | ◑ Fixed after the round: `fail_step_execution` fails the run in the same transaction; `next_runnable_step` offers nothing and `claim_step_for_execution` refuses when the run has a failed step or is finished. Three tests, the first two failed on the old code (the run stayed `drafted`). Not done: a test through the `stream_run_step` handler itself — it needs a Tauri window; the two functions it calls are the ones tested. |
 | `K-09` | P2 | **Release CI builds POSIX packages whose first launch cannot provision** — only the `.deb` carries the installer. | 🔴 Open |
-| `K-10` | P3 | **The counted full-suite claim names no environment** and did not reproduce in the auditor's. | 🔴 Open |
+| `K-10` | P3 | **The counted full-suite claim names no environment** and did not reproduce in the auditor's. | ◑ Fixed after the round: `tools/check_engine_test_env.py` says before a run whether the count is expected — a writable temp directory, a working `AF_UNIX` socket, a created directory that is ours, a temp directory owned by root or us. Run in the reviewer's own sandbox (`codex sandbox`, workspace-write) it is RED on the two facts the audit reported: `AF_UNIX` bind EPERM and `/tmp` owned by uid 65534. Not done: skips inside the suite itself; these may not be the only environmental facts it needs. |
 
 ## Still open in the earlier rounds
 

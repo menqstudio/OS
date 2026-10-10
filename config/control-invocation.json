@@ -195,6 +195,7 @@
       "blocks": "merge",
       "invoked_by": "Coordination · docs consistency gate"
     },
+    "tools/check_engine_test_env.py": {"kind": "check", "blocks": "merge", "invoked_by": "Coordination · docs consistency gate"},
     "tools/check_facts.py": {"kind": "check", "blocks": "merge", "invoked_by": "Coordination · docs consistency gate"},
     "tools/check_handoff_ready.py": {
       "kind": "check",
