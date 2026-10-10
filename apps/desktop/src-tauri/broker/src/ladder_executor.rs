@@ -63,7 +63,7 @@ use brops_core::governed_message_store::AcceptedOutput;
 use brops_core::governed_output_pull::{pull_output, PullError};
 use brops_core::governed_prepare::{
     prepare_governed_turn_v1b, resolve_governed_generation_config_v1b, GovernedChatMsg,
-    PreparedGovernedTurnV1B, HISTORY_ROLES,
+    history_role_for_stored, PreparedGovernedTurnV1B,
 };
 use brops_core::governed_submit::{
     governed_turn_submit_prepared, ChallengeDocument, GovernedTurnExecutionV1B, SubmitTransport,
@@ -180,8 +180,11 @@ impl SqliteTurnContent {
         }
         let mut stmt = conn
             .prepare(
+                // The tie-break is `rowid`, as in the desktop's own `chat::list_messages`. It was
+                // `id`, a random UUID: two messages written in one millisecond were hashed in an
+                // order that was neither the order written nor the order the person saw.
                 "SELECT role, body FROM messages WHERE conversation_id = ?1 \
-                 ORDER BY created_at DESC, id DESC LIMIT ?2",
+                 ORDER BY created_at DESC, rowid DESC LIMIT ?2",
             )
             .map_err(|_| TurnReason::UpstreamBlocked)?;
         let rows = stmt
@@ -192,14 +195,15 @@ impl SqliteTurnContent {
         let mut newest_first: Vec<GovernedChatMsg> = Vec::new();
         for row in rows {
             let (role, body) = row.map_err(|_| TurnReason::UpstreamBlocked)?;
-            // The closed role set is checked HERE as well as inside `prepare_governed_turn_v1b`, and
-            // the duplication is deliberate in exactly one direction: this one turns an unexpected
-            // stored role into a Block naming the store, rather than into a `PrepareError` that reads
-            // as though the caller passed something bad. Both refuse; neither substitutes a default.
-            if !HISTORY_ROLES.contains(&role.as_str()) {
+            // The store's vocabulary is not the wire's (audit K-02): a reply is stored as `agent` and
+            // sent as `assistant`. `history_role_for_stored` is the one mapping. A stored role it
+            // does not know is a Block naming the store, rather than a `PrepareError` that reads as
+            // though the caller passed something bad; `prepare_governed_turn_v1b` checks the wire
+            // enum again. Both refuse; neither substitutes a default.
+            let Some(wire_role) = history_role_for_stored(&role) else {
                 return Err(TurnReason::UpstreamBlocked);
-            }
-            newest_first.push(GovernedChatMsg::new(role, body));
+            };
+            newest_first.push(GovernedChatMsg::new(wire_role, body));
         }
         newest_first.reverse(); // chronological — the order that is sent, and therefore hashed
         Ok(newest_first)
@@ -546,11 +550,48 @@ mod tests {
         conn
     }
 
+    /// Audit K-02. Through the REAL schema and the REAL writer, not a hand-made table: the desktop
+    /// stores a generated reply as `agent`, and `chat::post_message` refuses `assistant`. A window
+    /// that holds a reply must still be readable, or every conversation blocks at its second turn.
+    #[test]
+    fn a_conversation_written_by_the_real_repository_is_readable_after_its_first_reply() {
+        use brops_core::{repo, NewMessage};
+        let conn = brops_core::db::open_in_memory().unwrap();
+        let conv = repo::chat::create_conversation(&conn, "direct", "t", repo::audit::Actor::local_operator()).unwrap();
+        for (role, body) in [("user", "hi"), ("agent", "hello"), ("system", "note"), ("user", "again")] {
+            repo::chat::post_message(
+                &conn,
+                NewMessage { conversation_id: conv.id.clone(), role: role.into(), author: "a".into(), body: body.into() },
+            )
+            .unwrap();
+        }
+        // The fixture-only role is not one the product can store.
+        assert!(repo::chat::post_message(
+            &conn,
+            NewMessage { conversation_id: conv.id.clone(), role: "assistant".into(), author: "a".into(), body: "x".into() },
+        )
+        .is_err());
+        // All four in ONE millisecond, which is what a fast machine does anyway: the test that
+        // first ran here failed one run in two for that reason, and found the ordering defect
+        // below. The order must be the order they were written in, as the desktop's own
+        // `chat::list_messages` reads them (`created_at DESC, rowid DESC`).
+        conn.execute("UPDATE messages SET created_at = '1700000000000' WHERE conversation_id = ?1", [&conv.id]).unwrap();
+        let got = SqliteTurnContent::read_window(&conn, &conv.id, 10).expect("the window must be readable");
+        assert_eq!(got, msgs(&[("user", "hi"), ("assistant", "hello"), ("system", "note"), ("user", "again")]));
+        // A window smaller than the conversation keeps the NEWEST, still in written order.
+        assert_eq!(
+            SqliteTurnContent::read_window(&conn, &conv.id, 2).unwrap(),
+            msgs(&[("system", "note"), ("user", "again")])
+        );
+        // And what was read is accepted by the preparation that hashes it.
+        assert!(prepare_governed_turn_v1b("s", &got, config(), 1, "ws", "in").is_ok());
+    }
+
     #[test]
     fn the_window_is_the_newest_messages_in_chronological_order() {
         let conn = messages_db(&[
             ("001", "c1", "user", "first"),
-            ("002", "c1", "assistant", "second"),
+            ("002", "c1", "agent", "second"),
             ("003", "c1", "user", "third"),
             ("004", "c2", "user", "other conversation"),
         ]);
@@ -567,11 +608,15 @@ mod tests {
     /// had worked.
     #[test]
     fn an_unknown_role_blocks_rather_than_being_coerced() {
-        let conn = messages_db(&[("001", "c1", "tool", "not one of the three")]);
-        assert!(matches!(
-            SqliteTurnContent::read_window(&conn, "c1", 10),
-            Err(TurnReason::UpstreamBlocked)
-        ));
+        // `assistant` is a WIRE role; the product cannot store it, so a row carrying it did not
+        // come from the product (audit K-02 found the passing fixture hand-inserting exactly that).
+        for role in ["tool", "assistant", "Agent", "", "agent "] {
+            let conn = messages_db(&[("001", "c1", role, "not a role the desktop stores")]);
+            assert!(
+                matches!(SqliteTurnContent::read_window(&conn, "c1", 10), Err(TurnReason::UpstreamBlocked)),
+                "{role:?} was read"
+            );
+        }
     }
 
     #[test]

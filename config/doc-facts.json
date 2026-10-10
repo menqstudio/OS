@@ -28,7 +28,7 @@
     },
     "rust_tests": {
       "source": {
-        "value": "1447"
+        "value": "1449"
       },
       "note": "cargo test --workspace --no-fail-fast, measured by hand; change it here and nowhere else"
     },

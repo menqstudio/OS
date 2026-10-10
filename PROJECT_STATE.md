@@ -48,7 +48,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | frontend · 2026-10-09 | typecheck clean, 1153 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
-| Rust, 10 crates · 2026-10-09 | 1447 passed, 1 ignored (needs root; CI runs it) |
+| Rust, 10 crates · 2026-10-09 | 1449 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
@@ -57,7 +57,7 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 ## Standing risks
 
 **RED is the independent verdict** — the ELEVENTH round, `main` at `e3fc507`, no P0, four P1
-(`K-03`–`K-06` fixed ◑; six open). Everything merged after that head is ◑.
+(`K-02`–`K-06` fixed ◑; five open). Everything merged after that head is ◑.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;

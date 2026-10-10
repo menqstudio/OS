@@ -116,6 +116,25 @@ pub const GOVERNED_GENERATION_CONFIG_FIELDS: [&str; 5] =
 /// §4.10(g)'s closed `role` enum for a `history` entry.
 pub const HISTORY_ROLES: [&str; 3] = ["user", "assistant", "system"];
 
+/// The ONE mapping from a role as the desktop STORES it (`domain::MESSAGE_ROLES`: `user`, `agent`,
+/// `system`) to the role §4.10(g) puts on the wire ([`HISTORY_ROLES`]).
+///
+/// Audit K-02: the two vocabularies differ in one word. The desktop stores a generated reply as
+/// `agent`; the wire says `assistant`. With no mapping, a window read from the store carried
+/// `agent`, which is outside the closed enum, so every conversation blocked at the first turn whose
+/// window held a reply. The mapped role is what is sent and therefore what is hashed.
+///
+/// `None` for anything the desktop cannot store — including `assistant` itself, which
+/// `chat::post_message` refuses. A caller turns `None` into its own refusal; nothing defaults.
+pub fn history_role_for_stored(stored: &str) -> Option<&'static str> {
+    match stored {
+        "user" => Some("user"),
+        "agent" => Some("assistant"),
+        "system" => Some("system"),
+        _ => None,
+    }
+}
+
 // =================================================================================================
 // Refusals — a closed enum, each reachable BY NAME
 // =================================================================================================
@@ -1096,6 +1115,26 @@ mod tests {
         // An empty history canonicalizes to `[]` — 2 bytes, never 0. That is why only `system` can
         // produce a zero-byte staged artifact.
         assert_eq!(history_jcs(&[]), b"[]");
+    }
+
+    /// Audit K-02. Every role the desktop can store has a wire role, the wire role is in the closed
+    /// enum, and nothing else maps — so the two vocabularies cannot drift apart unnoticed.
+    #[test]
+    fn every_stored_role_maps_into_the_wire_enum_and_nothing_else_maps() {
+        for stored in crate::domain::MESSAGE_ROLES {
+            let wire = history_role_for_stored(stored).unwrap_or_else(|| panic!("{stored:?} has no wire role"));
+            assert!(HISTORY_ROLES.contains(&wire), "{stored:?} -> {wire:?}");
+        }
+        assert_eq!(history_role_for_stored("agent"), Some("assistant"));
+        assert_eq!(history_role_for_stored("user"), Some("user"));
+        assert_eq!(history_role_for_stored("system"), Some("system"));
+        for not_stored in ["assistant", "tool", "", "Agent", "agent ", "USER"] {
+            assert_eq!(history_role_for_stored(not_stored), None, "{not_stored:?}");
+        }
+        // Each wire role is reached, so no member of the closed enum is unreachable from the store.
+        for wire in HISTORY_ROLES {
+            assert!(crate::domain::MESSAGE_ROLES.iter().any(|s| history_role_for_stored(s) == Some(wire)), "{wire:?}");
+        }
     }
 
     #[test]
