@@ -521,6 +521,22 @@ impl Drop for ConfirmationGuard {
 const MAX_CONFIRMS_PER_WINDOW: usize = 20;
 const CONFIRM_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The body of the native approval dialog. The labels are the application's and start at column
+/// 0; `payload` is already in display-safe form (see `brops_core::dialog_text`).
+fn approval_dialog_body(a: &Approval, payload: &str) -> String {
+    use brops_core::dialog_text::inline;
+    format!(
+        "Approve this privileged action?\n\nAction: {}\nRisk: {}\nLevel: {}\n\n{}",
+        inline(&a.action_type), inline(&a.risk_level), inline(&a.level), payload
+    )
+}
+
+/// What the dialog shows under the approval's own three lines: the run step's full execution
+/// scope when the approval gates one, the approval's target otherwise.
+fn approval_dialog_payload(scope: Option<String>, a: &Approval) -> String {
+    scope.unwrap_or_else(|| format!("Target:\n{}", brops_core::dialog_text::block(&truncated(&a.target, 300))))
+}
+
 fn confirm_rate_limit(label: &str) -> Result<(), String> {
     static HITS: RateWindow = OnceLock::new();
     fixed_window_rate_limit(&HITS, label, MAX_CONFIRMS_PER_WINDOW, CONFIRM_WINDOW, "confirmation")
@@ -561,14 +577,9 @@ pub async fn confirm_approval(
         // Show exactly what will reach the provider (intent + plan + step title +
         // detail) — the confirmer must not see a benign summary while a different
         // payload executes. This comes from the SAME state the digest hashes.
-        let payload = repo::approvals::execution_payload(&conn, &a)
-            .map_err(|e| e.to_string())?
-            .unwrap_or_else(|| truncated(&a.target, 300));
-        let body = format!(
-            "Approve this privileged action?\n\nAction: {}\nRisk: {}\nLevel: {}\n\n{}",
-            a.action_type, a.risk_level, a.level, payload
-        );
-        (body, nonce, digest)
+        let scope = repo::approvals::execution_payload(&conn, &a).map_err(|e| e.to_string())?;
+        let payload = approval_dialog_payload(scope, &a);
+        (approval_dialog_body(&a, &payload), nonce, digest)
     };
     // 2. Native, renderer-independent confirmation. Run off the main thread so
     //    `blocking_show` does not deadlock the event loop.
@@ -2444,6 +2455,9 @@ struct NativeDeletePrompt {
 /// value falls back to English, and no renderer text reaches the dialog. The row's own
 /// fields are truncated for display; the delete is by id and is not affected by that.
 fn delete_automation_prompt(lang: Option<&str>, a: &Automation) -> NativeDeletePrompt {
+    // Audit K-06: the row is renderer-written, so each field is one line with hidden and
+    // reordering characters made visible. It cannot add a line that reads as the dialog's own.
+    use brops_core::dialog_text::inline;
     let (title, question, name, trigger, action, state, armed, disarmed, consequence, confirm, cancel) =
         match lang {
             Some("hy") => (
@@ -2490,9 +2504,9 @@ fn delete_automation_prompt(lang: Option<&str>, a: &Automation) -> NativeDeleteP
         title: title.to_string(),
         body: format!(
             "{question}\n\n{name}: {}\n{trigger}: {}\n{action}: {}\n{state}: {}\n\n{consequence}",
-            truncated(&a.name, MAX_AUTOMATION_NAME_CHARS),
-            truncated(&a.trigger, 300),
-            truncated(&a.action, 300),
+            inline(&truncated(&a.name, MAX_AUTOMATION_NAME_CHARS)),
+            inline(&truncated(&a.trigger, 300)),
+            inline(&truncated(&a.action, 300)),
             if a.enabled { armed } else { disarmed },
         ),
         confirm_label: confirm.to_string(),
@@ -2548,7 +2562,13 @@ where
     }
     let conn = db.lock().map_err(|e| e.to_string())?;
     let current = repo::automations::get(&conn, id).map_err(|e| e.to_string())?;
-    if (&current.name, &current.trigger, &current.action) != (&shown.name, &shown.trigger, &shown.action) {
+    // Audit K-06: compare what was SHOWN, not a hand-kept list of fields. The dialog built from
+    // the row as it is now must be the dialog the person answered — so a field added to the
+    // prompt is compared from the day it is added (`enabled` was displayed and not compared).
+    // The raw fields are compared as well, because the prompt truncates them.
+    if delete_automation_prompt(lang, &current) != delete_automation_prompt(lang, &shown)
+        || (&current.name, &current.trigger, &current.action) != (&shown.name, &shown.trigger, &shown.action)
+    {
         return Err(format!(
             "{DELETE_NOT_CONFIRMED_PREFIX}: nothing was deleted. The automation changed while the system dialog was open, so the answer was about a different one."
         ));
@@ -3493,6 +3513,67 @@ mod tests {
         }
     }
 
+    /// Column-0 lines of a dialog body: where the application's own labels are.
+    fn column_zero_lines(body: &str) -> Vec<&str> {
+        body.split('\n').filter(|l| !l.is_empty() && !l.starts_with(' ')).collect()
+    }
+
+    /// Audit K-06. The stored row is renderer-written; it must not be able to add a line that
+    /// reads as the dialog's own, or reorder what is shown.
+    #[test]
+    fn an_automation_cannot_draw_labels_into_its_own_delete_dialog() {
+        let conn = brops_core::db::open_in_memory().expect("in-memory db");
+        let a = repo::automations::create(
+            &conn,
+            NewAutomation {
+                name: "digest\n\nState: disarmed\n\nNothing will be deleted.".to_string(),
+                trigger: "every: 1d".to_string(),
+                action: "note: \u{202E}efas si siht".to_string(),
+            },
+            repo::audit::Actor::local_operator(),
+        )
+        .expect("automation");
+        let prompt = delete_automation_prompt(None, &a);
+        assert_eq!(
+            column_zero_lines(&prompt.body),
+            [
+                "Delete this automation?",
+                "Name: digest\\n\\nState: disarmed\\n\\nNothing will be deleted.",
+                "Trigger: every: 1d",
+                "Action: note: \\u{202E}efas si siht",
+                "State: disarmed",
+                "The automation and its whole run history will be deleted. This cannot be undone.",
+            ],
+            "{}", prompt.body
+        );
+        assert!(!prompt.body.contains('\u{202E}'));
+    }
+
+    /// Audit K-04, the half built here: the approval's own fields and the fallback target.
+    #[test]
+    fn an_approval_cannot_draw_labels_into_its_own_dialog() {
+        let conn = brops_core::db::open_in_memory().expect("in-memory db");
+        let a = repo::approvals::create(
+            &conn, "Send email\nRisk: low\nLevel: A0", "out\u{202E}box\n\nAction: read", "A3", "high",
+            None, None, "webview:main", "sess-1", &brops_core::id(), repo::audit::Actor::local_operator(),
+        ).expect("approval");
+        let payload = approval_dialog_payload(None, &a);
+        let body = approval_dialog_body(&a, &payload);
+        assert_eq!(
+            column_zero_lines(&body),
+            [
+                "Approve this privileged action?",
+                "Action: Send email\\nRisk: low\\nLevel: A0",
+                "Risk: high",
+                "Level: A3",
+                "Target:",
+            ],
+            "{body}"
+        );
+        assert!(!body.contains('\u{202E}'), "{body:?}");
+        assert!(body.contains("    out\\u{202E}box\n    \n    Action: read"), "{body}");
+    }
+
     #[test]
     fn an_automation_that_changed_while_the_dialog_was_open_is_not_deleted() {
         let (db, a) = db_with_an_automation();
@@ -3510,6 +3591,52 @@ mod tests {
         assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
         assert!(still_stored(&db, &a.id));
         assert!(deleted_events(&db).is_empty());
+    }
+
+    /// The dialog shows the first 300 characters of an action that may hold 4000. A change past
+    /// what is shown leaves the dialog identical, and is still a different automation.
+    #[test]
+    fn an_automation_changed_past_what_the_dialog_shows_is_not_deleted() {
+        let (db, a) = db_with_an_automation();
+        let long = format!("note: {}", "a".repeat(600));
+        db.lock().unwrap().execute("UPDATE automations SET action = ?1 WHERE id = ?2", [&long, &a.id]).unwrap();
+        let err = block_on(delete_automation_after_native_confirmation(
+            &db, &a.id, None, "native:main",
+            |_| {
+                let changed = format!("{long} && task: something else");
+                db.lock().unwrap().execute("UPDATE automations SET action = ?1 WHERE id = ?2", [&changed, &a.id]).unwrap();
+                async { Ok(true) }
+            },
+        ))
+        .expect_err("the stored action is not the one that was there when the person was asked");
+        assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
+        assert!(still_stored(&db, &a.id));
+    }
+
+    /// Audit K-06, the second half. The dialog says whether the automation is armed; a toggle
+    /// while it is open changes a fact the person was shown, so the answer is about another row.
+    #[test]
+    fn an_automation_armed_or_disarmed_while_the_dialog_was_open_is_not_deleted() {
+        for shown_armed in [false, true] {
+            let (db, a) = db_with_an_automation();
+            db.lock().unwrap()
+                .execute("UPDATE automations SET enabled = ?1 WHERE id = ?2", rusqlite::params![shown_armed, &a.id])
+                .unwrap();
+            let err = block_on(delete_automation_after_native_confirmation(
+                &db, &a.id, None, "native:main",
+                |prompt| {
+                    assert!(prompt.body.contains(if shown_armed { "State: armed" } else { "State: disarmed" }));
+                    db.lock().unwrap()
+                        .execute("UPDATE automations SET enabled = ?1 WHERE id = ?2", rusqlite::params![!shown_armed, &a.id])
+                        .unwrap();
+                    async { Ok(true) }
+                },
+            ))
+            .expect_err("the person was shown the other state");
+            assert!(err.starts_with(DELETE_NOT_CONFIRMED_PREFIX), "{err}");
+            assert!(still_stored(&db, &a.id), "shown_armed={shown_armed}");
+            assert!(deleted_events(&db).is_empty());
+        }
     }
 
     /// The text of one top-level production function: from its `fn` to the first `}` in

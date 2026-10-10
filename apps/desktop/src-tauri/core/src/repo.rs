@@ -629,10 +629,15 @@ pub mod approvals {
         }
         /// Human-readable payload for the native confirmation dialog — the same
         /// fields the digest binds and the prompt sends.
+        ///
+        /// Audit K-04: all four are renderer-written, so each is shown as an indented block
+        /// with hidden and reordering characters made visible. The four labels are the only
+        /// lines at column 0. The digest and the provider prompt still take the raw fields.
         pub fn dialog_text(&self) -> String {
+            use crate::dialog_text::block;
             format!(
                 "Run intent:\n{}\n\nRun plan:\n{}\n\nStep:\n{}\n\nStep detail:\n{}",
-                self.intent, self.plan, self.step_title, self.step_detail
+                block(&self.intent), block(&self.plan), block(&self.step_title), block(&self.step_detail)
             )
         }
     }

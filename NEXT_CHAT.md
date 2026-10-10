@@ -51,7 +51,7 @@ Run these. The numbers below have been wrong in every audit round so far.
 
 ```bash
 cd engine && BRO_ENV=ci python3 -m unittest discover -s tests    # 2741 OK; skips are per-env
-cd apps/desktop/src-tauri && cargo test --workspace              # 1434 passed
+cd apps/desktop/src-tauri && cargo test --workspace              # 1447 passed
 cd apps/desktop && npm ci && npm run typecheck && npm test       # 1153 tests / 87 files
 python3 tools/check_canon_budget.py       # the read set fits one context
 python3 tools/check_contrast.py           # 98 text pairs clear WCAG AA in both themes
@@ -78,7 +78,7 @@ verifies under the floor-pinned root anchor — nothing shipped sets it, and the
 
 **The standing independent verdict is RED.** ELEVEN rounds; the current one is
 [`2026-10-09-eleventh-audit-e3fc507.md`](apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md)
-— no P0, four P1 (`K-01`–`K-04`), `K-03`, `K-05` fixed ◑, eight open. Read `e3fc507`;
+— no P0, four P1 (`K-01`–`K-04`), `K-03`–`K-06` fixed ◑, six open. Read `e3fc507`;
 everything merged after it is ◑.
 
 **Two things wait on the Owner** *(the unsigned `BroPS 0.1.0` release is a DRAFT since 2026-10-08)*:

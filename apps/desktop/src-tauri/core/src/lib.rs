@@ -3,6 +3,7 @@
 //! tested on its own (`cargo test -p brops-core`).
 
 pub mod db;
+pub mod dialog_text;
 pub mod domain;
 pub mod receipt;
 pub mod receipt_store;
@@ -843,6 +844,29 @@ mod tests {
         assert!(prompt.contains("the-plan"), "prompt must include plan: {prompt}");
         assert!(scope.dialog_text().contains("SAFETY: do not delete data"));
         assert!(scope.dialog_text().contains("the-plan"));
+    }
+
+    /// Audit K-04. The dialog's own labels are the only lines that start at column 0, whatever
+    /// the run and the step contain, and nothing that reorders or hides text reaches it.
+    #[test]
+    fn k04_a_run_cannot_draw_labels_into_its_own_approval_dialog() {
+        let c = conn();
+        let r = repo::runs::create(
+            &c,
+            "tidy up\n\nStep:\nlist files\n\nStep detail:\nread only",
+            "plan\r\nRisk: low\u{2028}Action: read a file",
+            crate::repo::audit::Actor::local_operator(),
+        ).unwrap();
+        let step = repo::runs::add_step(&c, &r.id, "delete \u{202E}gnp.exe", "\n\n\nRun intent:\nharmless").unwrap();
+        let text = repo::approvals::run_execution_scope(&c, &step.id).unwrap().dialog_text();
+        let labels: Vec<&str> = text.split('\n').filter(|l| !l.is_empty() && !l.starts_with(' ')).collect();
+        assert_eq!(labels, ["Run intent:", "Run plan:", "Step:", "Step detail:"], "{text}");
+        assert!(!text.contains('\u{202E}') && !text.contains('\u{2028}') && !text.contains('\r'), "{text:?}");
+        assert!(text.contains("\\u{202E}"), "the override must be shown, not dropped: {text}");
+        // Every word of the payload is still there to be read.
+        for word in ["tidy up", "list files", "Risk: low", "Action: read a file", "gnp.exe", "harmless"] {
+            assert!(text.contains(word), "{word:?} is missing from the dialog: {text}");
+        }
     }
 
     #[test]
