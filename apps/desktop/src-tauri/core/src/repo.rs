@@ -2099,6 +2099,11 @@ pub mod runs {
     /// The step an execution should run next: the active one if present,
     /// otherwise the lowest-position pending one. `None` when nothing remains.
     pub fn next_runnable_step(conn: &Connection, run_id: &str) -> CoreResult<Option<RunStep>> {
+        // Audit K-08: a failed step ends the run, whatever the run row says. Checked here as well
+        // as in `fail_step_execution`, because a step can be `failed` without that function.
+        if has_failed_step(conn, run_id)? {
+            return Ok(None);
+        }
         if let Some(active) = conn
             .query_row(
                 "SELECT * FROM run_steps WHERE run_id = ?1 AND status = 'active' ORDER BY position LIMIT 1",
@@ -2117,6 +2122,16 @@ pub mod runs {
             )
             .optional()?;
         Ok(pending)
+    }
+
+    /// Whether any step of this run has failed. A failed step is terminal for its run (audit K-08).
+    fn has_failed_step(conn: &Connection, run_id: &str) -> CoreResult<bool> {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM run_steps WHERE run_id = ?1 AND status = 'failed'",
+            [run_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
     }
 
     /// T-011: atomically CLAIM a runnable step for execution BEFORE the provider is
@@ -2144,6 +2159,15 @@ pub mod runs {
             )?;
             if mid > 0 {
                 return Err(CoreError::Invalid { field: "status", value: "run already has a step mid-execution".into() });
+            }
+            // Audit K-08: the claim is the last point before a provider is called, so it refuses
+            // on its own account — a finished run, or a run with a failed step, starts nothing.
+            let run = get(tx, &step.run_id)?;
+            if matches!(run.status.as_str(), "succeeded" | "failed" | "cancelled") {
+                return Err(CoreError::Invalid { field: "status", value: format!("run is {}", run.status) });
+            }
+            if has_failed_step(tx, &step.run_id)? {
+                return Err(CoreError::Invalid { field: "status", value: "an earlier step of this run failed".into() });
             }
             // Claim: a runnable step with no attempt yet. The `execution_attempt_id IS
             // NULL` guard is the mutual exclusion — a second concurrent claim writes 0
@@ -2209,6 +2233,15 @@ pub mod runs {
             if n == 0 {
                 return Err(CoreError::Invalid { field: "attempt", value: "stale or invalid execution attempt".into() });
             }
+            // Audit K-08: the run fails WITH its step, in this transaction — as the rejection and
+            // abandoned-execution paths already did. It used to stay non-terminal, so the next
+            // pending step stayed runnable after the step before it had failed.
+            tx.execute(
+                "UPDATE runs SET status = 'failed', updated_at = ?1
+                   WHERE id = (SELECT run_id FROM run_steps WHERE id = ?2)
+                     AND status NOT IN ('succeeded','failed','cancelled')",
+                rusqlite::params![now(), id],
+            )?;
             Ok(())
         })?;
         get_step(conn, id)
