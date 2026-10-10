@@ -1,6 +1,6 @@
 # PROJECT_STATE — live status · կենդանի վիճակ
 
-**Last updated · Վերջին թարմացում:** 2026-10-09 — 152 pull requests merged (`#219`–`#371`), `main` at
+**Last updated · Վերջին թարմացում:** 2026-10-10 — 152 pull requests merged (`#219`–`#371`), `main` at
 `a1c0c28`: all seven workflows green there. Seven of eleven phases have
 every box ticked (0, 2–7); 97 of 115 rows. Phase 1 waits on 24 prerequisites an installer and an
 administrator provide and the Linux kernel. The broker now reads its root from the floor-pinned
@@ -11,9 +11,9 @@ It answers what `NEXT_CHAT.md` does not: **the state of each part of the product
 is in [`docs/archive/`](docs/archive/SESSION_LOG_2026-07_2026-08.md).
 
 <!-- BANNER -->
-> **✅ SETTLED as of `main` `ca6fc74`.** PR #387 on `adopt-menq-standard` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
+> **✅ SETTLED as of `main` `3b2510f`.** PR #388 on `k-04-approval-display` records it and merges after: read the live head with `git log -1`. Blocked on whom: `docs/OWNER_ACTION_REQUIRED.md`.
 >
-> **Next:** T-169 redesign; K-01, K-02, K-04.
+> **Next:** T-169 redesign; K-01, K-02, K-08.
 >
 > **Standing verdict: RED** -- the ELEVENTH round, `apps/desktop/AUDIT/2026-10-09-eleventh-audit-e3fc507.md`. Check any tick in prose against `apps/desktop/AUDIT/AUDIT_LEDGER.md` before believing it.
 <!-- /BANNER -->
@@ -48,7 +48,7 @@ Each row carries the date it was measured, because they are not measured togethe
 | frontend · 2026-10-09 | typecheck clean, 1153 / 87 files |
 | **Debian** | |
 | engine (Python), non-root, Debian 13 · 2026-10-08 | 2741 OK, 17 skipped |
-| Rust, 10 crates · 2026-10-09 | 1434 passed, 1 ignored (needs root; CI runs it) |
+| Rust, 10 crates · 2026-10-09 | 1447 passed, 1 ignored (needs root; CI runs it) |
 | `npm audit --audit-level=high` · 2026-09-01 | 0 vulns |
 | FW-1 boundary proof · 2026-09-01 | 23/23 x3 |
 
@@ -57,7 +57,7 @@ Toolchain: `config/toolchain.json`, checked by `tools/check_doc_claims.py`; Debi
 ## Standing risks
 
 **RED is the independent verdict** — the ELEVENTH round, `main` at `e3fc507`, no P0, four P1
-(`K-03`, `K-05` fixed ◑; eight open). Everything merged after that head is ◑.
+(`K-03`–`K-06` fixed ◑; six open). Everything merged after that head is ◑.
 
 **The audit ledger is not tamper-evident on any real deployment.** `BRO_AUDIT_ANCHOR_SIGNER`
 and `BRO_AUDIT_ANCHOR_KEY_ID` decide custody and nothing in the shipped product sets either;
