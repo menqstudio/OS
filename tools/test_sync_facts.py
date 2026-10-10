@@ -246,5 +246,42 @@ class TheRepositoryItLivesIn(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
 
+class EntryPointTests(unittest.TestCase):
+    """`tools/sync_facts.py` is an entry point for the kit's file, not a second copy of it."""
+
+    ENTRY = pathlib.Path(__file__).resolve().parent / "sync_facts.py"
+    KIT = pathlib.Path(__file__).resolve().parents[1] / "menq-standard" / "sync_facts.py"
+
+    def test_the_imported_module_is_the_kits_file(self):
+        self.assertTrue(self.KIT.is_file(), "the MenQ Standard kit is not in this checkout")
+        self.assertEqual(pathlib.Path(m.__file__).resolve(), self.KIT)
+
+    def test_the_entry_point_holds_no_implementation_of_its_own(self):
+        text = self.ENTRY.read_text(encoding="utf-8")
+        for name in ("def resolve", "def main", "def apply", "argparse"):
+            self.assertNotIn(name, text, f"{name!r} is implemented in the entry point again")
+
+    def test_run_as_a_script_it_gives_the_kits_verdict(self):
+        import subprocess
+        import sys as _sys
+        root = self.ENTRY.parents[1]
+        via_entry = subprocess.run([_sys.executable, str(self.ENTRY), "--check"], cwd=root, capture_output=True, text=True)
+        via_kit = subprocess.run([_sys.executable, str(self.KIT), "--check"], cwd=root, capture_output=True, text=True)
+        self.assertEqual((via_entry.returncode, via_entry.stdout), (via_kit.returncode, via_kit.stdout))
+        self.assertIn("fact(s)", via_entry.stdout)
+
+    def test_a_missing_kit_file_is_said_plainly(self):
+        import importlib.util
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = pathlib.Path(tmp) / "tools" / "sync_facts.py"
+            copy.parent.mkdir()
+            copy.write_bytes(self.ENTRY.read_bytes())
+            spec = importlib.util.spec_from_file_location("sync_facts_without_kit", copy)
+            with self.assertRaises(SystemExit) as caught:
+                spec.loader.exec_module(importlib.util.module_from_spec(spec))
+        self.assertIn("the kit's file is missing", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
