@@ -942,6 +942,63 @@ mod tests {
         assert!(!repo::approvals::approved_for(&c, &step.id, "run_step", "Execute run step").unwrap());
     }
 
+    /// Audit K-08. A step that failed is the end of its run: the next step may depend on it — it
+    /// may BE the safety or precondition step — so nothing after it is runnable or claimable.
+    #[test]
+    fn k08_a_failed_step_fails_the_run_and_nothing_after_it_can_run() {
+        let c = conn();
+        let r = repo::runs::create(&c, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
+        let first = repo::runs::add_step(&c, &r.id, "check the precondition", "d").unwrap();
+        let second = repo::runs::add_step(&c, &r.id, "do the dangerous thing", "d").unwrap();
+        let attempt = repo::runs::claim_step_for_execution(&c, &first.id, "sess-A").unwrap();
+        repo::runs::fail_step_execution(&c, &first.id, &attempt).unwrap();
+
+        assert_eq!(repo::runs::get(&c, &r.id).unwrap().status, "failed", "the run outlived its failed step");
+        assert!(
+            repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none(),
+            "a step after a failed one was offered as runnable"
+        );
+        assert!(
+            repo::runs::claim_step_for_execution(&c, &second.id, "sess-A").is_err(),
+            "a step after a failed one was claimed for execution"
+        );
+        assert_eq!(repo::runs::get_step(&c, &second.id).unwrap().status, "pending");
+        assert!(repo::runs::get_step(&c, &second.id).unwrap().execution_attempt_id.is_none());
+        assert!(repo::runs::advance(&c, &r.id, crate::repo::audit::Actor::local_operator()).is_err());
+    }
+
+    /// The same refusals hold when only the STEP row says failed — a run row left non-terminal by
+    /// an older build, or by any path that fails a step without this function.
+    #[test]
+    fn k08_a_failed_predecessor_alone_stops_the_run() {
+        let c = conn();
+        let r = repo::runs::create(&c, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
+        let first = repo::runs::add_step(&c, &r.id, "one", "d").unwrap();
+        let second = repo::runs::add_step(&c, &r.id, "two", "d").unwrap();
+        c.execute("UPDATE run_steps SET status = 'failed' WHERE id = ?1", [&first.id]).unwrap();
+        assert_ne!(repo::runs::get(&c, &r.id).unwrap().status, "failed");
+        assert!(repo::runs::next_runnable_step(&c, &r.id).unwrap().is_none());
+        assert!(repo::runs::claim_step_for_execution(&c, &second.id, "sess-A").is_err());
+        // A run with no failed step is untouched by any of this.
+        let ok = repo::runs::create(&c, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
+        let only = repo::runs::add_step(&c, &ok.id, "one", "d").unwrap();
+        assert_eq!(repo::runs::next_runnable_step(&c, &ok.id).unwrap().unwrap().id, only.id);
+        assert!(repo::runs::claim_step_for_execution(&c, &only.id, "sess-A").is_ok());
+    }
+
+    /// A finished run starts nothing, even with a pending step left in it and no failed one.
+    #[test]
+    fn k08_a_finished_run_cannot_have_a_step_claimed() {
+        for terminal in ["cancelled", "failed", "succeeded"] {
+            let c = conn();
+            let r = repo::runs::create(&c, "i", "p", crate::repo::audit::Actor::local_operator()).unwrap();
+            let step = repo::runs::add_step(&c, &r.id, "one", "d").unwrap();
+            c.execute("UPDATE runs SET status = ?1 WHERE id = ?2", [terminal, r.id.as_str()]).unwrap();
+            assert!(repo::runs::claim_step_for_execution(&c, &step.id, "sess-A").is_err(), "{terminal}");
+            assert!(repo::runs::get_step(&c, &step.id).unwrap().execution_attempt_id.is_none(), "{terminal}");
+        }
+    }
+
     #[test]
     fn t011_crash_leaves_no_wedged_run_reconciled_fail_closed() {
         // A claim by a session that then "crashes" (never completes/fails) must not
