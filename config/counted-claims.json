@@ -58,7 +58,7 @@
   ],
   "claims": {
     "gate_scripts": {
-      "value": 46,
+      "value": 47,
       "command": "ls tools/check_*.py | wc -l",
       "derive": {
         "glob": "tools/check_*.py"
